@@ -5,6 +5,7 @@ from app.core.sql_guard import ensure_safe_select
 from app.api.models import QueryRequest
 from app.routes.datasets import router as datasets_router
 from app.api.routes.query import router as query_router
+from app.api.routes.connections import router as connections_router
 
 
 
@@ -13,6 +14,7 @@ app = FastAPI(title="Database Assistant", version="0.1.0")
 app.include_router(customers_router)
 app.include_router(datasets_router)
 app.include_router(query_router)
+app.include_router(connections_router)
 
 
 @app.get("/health")
