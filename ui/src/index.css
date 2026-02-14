@@ -1,0 +1,122 @@
+:root {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f8f9fa;
+  --bg-tertiary: #f1f3f4;
+  --bg-hover: #e8eaed;
+  --border: #e0e0e0;
+  --text-primary: #1a1a1a;
+  --text-secondary: #5f6368;
+  --text-muted: #80868b;
+  --accent: #8b5cf6;
+  --accent-hover: #7c3aed;
+  --accent-muted: rgba(139, 92, 246, 0.12);
+  --success: #22c55e;
+  --error: #ef4444;
+  --radius: 12px;
+  --radius-sm: 8px;
+  --font: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  max-width: none;
+}
+
+body {
+  font-family: var(--font);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+input, textarea {
+  font-family: inherit;
+}
+
+/* Main app: grid so chat column gets all remaining width */
+.app-layout {
+  display: grid !important;
+  grid-template-columns: 280px 1fr !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  overflow: hidden;
+}
+
+.app-chat-column {
+  min-width: 0 !important;
+  width: 100% !important;
+  max-width: none !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden;
+}
+
+/* Chat input bar: rendered in body via portal, fixed to viewport, full width beside sidebar */
+.chat-input-bar {
+  position: fixed !important;
+  bottom: 0 !important;
+  left: 280px !important;
+  right: 0 !important;
+  width: calc(100vw - 280px) !important;
+  min-width: calc(100vw - 280px) !important;
+  max-width: none !important;
+  box-sizing: border-box !important;
+  padding: 20px 24px 32px !important;
+  border-top: 1px solid var(--border) !important;
+  background: var(--bg-primary) !important;
+  z-index: 9999 !important;
+}
+
+.chat-input-form {
+  display: flex !important;
+  width: 100% !important;
+  max-width: none !important;
+  box-sizing: border-box !important;
+  gap: 16px !important;
+  align-items: flex-end !important;
+  margin: 0 !important;
+}
+
+.chat-input-textarea {
+  flex: 1 1 0% !important;
+  min-width: 0 !important;
+  width: 100% !important;
+  max-width: none !important;
+  box-sizing: border-box !important;
+  padding: 16px 20px !important;
+  min-height: 80px !important;
+  max-height: 200px !important;
+  border-radius: var(--radius) !important;
+  border: 1px solid var(--border) !important;
+  background: var(--bg-secondary) !important;
+  color: var(--text-primary) !important;
+  font-size: 1rem !important;
+  font-family: inherit !important;
+  resize: vertical !important;
+}
+
+.chat-input-bar button,
+.chat-input-submit {
+  flex-shrink: 0 !important;
+  padding: 14px 24px !important;
+  border-radius: var(--radius) !important;
+  border: none !important;
+  background: var(--accent) !important;
+  color: white !important;
+  font-weight: 600 !important;
+  font-size: 0.95rem !important;
+  cursor: pointer !important;
+}
