@@ -122,6 +122,11 @@ def result_page(result_id: str):
         rows_html = '<div class="empty">No results returned</div>'
 
     sql_html = f'<pre class="sql">{r["sql"]}</pre>' if r["sql"] else ""
+    sql_section = (
+        '<div class="section"><div class="section-title">Generated SQL</div>'
+        + sql_html
+        + '</div>'
+    ) if r["sql"] else ""
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -221,7 +226,7 @@ def result_page(result_id: str):
     </div>
   </div>
 
-  {"<div class=\"section\"><div class=\"section-title\">Generated SQL</div>" + sql_html + "</div>" if r["sql"] else ""}
+  {sql_section}
 
   <div class="section">
     <div class="section-title">Results ({len(data)} rows)</div>
