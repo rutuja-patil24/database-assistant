@@ -18,7 +18,7 @@ DB_USER="da_user"
 DB_PASS="da_pass_prod_change_me"
 
 # Gemini API key
-GEMINI_KEY="AIzaSyBJWZtmqPxTEs7SjQ3Kr-FWoo6RBcXmaPQ"
+GEMINI_KEY="${GEMINI_API_KEY:-your-gemini-api-key-here}"  # set via env var, never hardcode
 ENCRYPTION_KEY="your-32-char-encryption-key-here"
 JWT_SECRET="your-jwt-secret-here"
 # ────────────────────────────────────────────────────────────────────
