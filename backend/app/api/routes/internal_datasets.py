@@ -41,12 +41,15 @@ router = APIRouter(prefix="/my-datasets", tags=["my-datasets"])
 
 
 def _sys_uri() -> str:
-    return (
-        f"postgresql://"
-        f"{os.getenv('DB_USER','da_user')}:{os.getenv('DB_PASSWORD','da_pass')}"
-        f"@{os.getenv('DB_HOST','127.0.0.1')}:{os.getenv('DB_PORT','5433')}"
-        f"/{os.getenv('DB_NAME','da_db')}"
-    )
+    user     = os.getenv("DB_USER", "da_user")
+    password = os.getenv("DB_PASS", os.getenv("DB_PASSWORD", "da_pass"))
+    host     = os.getenv("DB_HOST", "127.0.0.1")
+    port     = os.getenv("DB_PORT", "5432")
+    dbname   = os.getenv("DB_NAME", "da_db")
+    if host.startswith("/"):
+        # Cloud SQL Auth Proxy unix socket — must use ?host= query param
+        return f"postgresql://{user}:{password}@/{dbname}?host={host}"
+    return f"postgresql://{user}:{password}@{host}:{port}/{dbname}"
 
 
 def _conn():
