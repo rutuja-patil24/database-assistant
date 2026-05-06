@@ -40,8 +40,6 @@ export default function App() {
           {/* Public routes — no login required */}
           <Route path="/login"    element={<PublicRoute><LoginPage /></PublicRoute>} />
           <Route path="/register" element={<PublicRoute><RegisterPage /></PublicRoute>} />
-          <Route path="/plugin"   element={<PluginPage />} />
-
           {/* Private routes — login required */}
           <Route path="/" element={<PrivateRoute><AppLayout /></PrivateRoute>}>
             <Route index              element={<Navigate to="/dashboard" replace />} />
@@ -53,6 +51,7 @@ export default function App() {
             <Route path="/mysql"      element={<MySQLPage />} />
             <Route path="swarm"       element={<SwarmPage />} />
             <Route path="benchmark"   element={<BenchmarkDashboard />} />
+            <Route path="plugin"      element={<PluginPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>

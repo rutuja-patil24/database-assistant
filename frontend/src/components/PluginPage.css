@@ -1,90 +1,25 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
-/* ── Page shell ── */
+/* ── Page shell — sits inside AppLayout main-content ── */
 .pp-page {
-  min-height: 100vh;
-  background: #f9fafb;
+  max-width: 860px;
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   color: #111827;
 }
 
-/* ── Nav ── */
-.pp-nav {
-  background: #fff;
-  border-bottom: 1px solid #e5e7eb;
-  position: sticky;
-  top: 0;
-  z-index: 50;
-}
-.pp-nav-inner {
-  max-width: 860px;
-  margin: 0 auto;
-  padding: 0 24px;
-  height: 52px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.pp-nav-brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.pp-nav-logo {
-  width: 28px; height: 28px;
-  background: #6366f1;
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 10px;
-  font-weight: 800;
-  color: #fff;
-  letter-spacing: -0.3px;
-}
-.pp-nav-name {
-  font-size: 14px;
-  font-weight: 600;
-  color: #111827;
-}
-.pp-nav-divider {
-  color: #d1d5db;
-  font-size: 16px;
-}
-.pp-nav-section {
-  font-size: 13px;
-  color: #6b7280;
-}
-.pp-nav-badge {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  font-weight: 500;
-  color: #16a34a;
-  background: #f0fdf4;
-  border: 1px solid #bbf7d0;
-  border-radius: 20px;
-  padding: 3px 10px;
-}
-.pp-badge-dot {
-  width: 6px; height: 6px;
-  background: #22c55e;
-  border-radius: 50%;
-  animation: pp-pulse 2s infinite;
-}
-@keyframes pp-pulse { 0%,100%{opacity:1} 50%{opacity:.45} }
+/* Nav hidden when inside AppLayout */
+.pp-nav { display: none; }
 
 /* ── Content ── */
 .pp-content {
-  max-width: 860px;
-  margin: 0 auto;
-  padding: 40px 24px 64px;
+  /* no extra padding — AppLayout already provides 32px */
 }
 
 /* ── Page header ── */
 .pp-header {
-  margin-bottom: 32px;
+  margin-bottom: 28px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid #e5e7eb;
 }
 .pp-title {
   font-size: 1.75rem;
