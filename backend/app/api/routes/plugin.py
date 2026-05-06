@@ -260,106 +260,369 @@ def _run_nl_query_on_pg(question: str, connection_string: str) -> Dict:
         return {"sql": "", "data": [], "columns": [], "error": str(e)}
 
 
-@router.get("/results/{result_id}", response_class=HTMLResponse, include_in_schema=False)
-def result_page(result_id: str):
-    """Shareable result page."""
-    r = _result_store.get(result_id)
-    if not r:
-        return HTMLResponse("<h2 style='font-family:sans-serif;padding:40px'>Result not found or expired</h2>", status_code=404)
+def _esc(s: str) -> str:
+    return str(s).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace('"',"&quot;")
 
-    data = r["data"]
-    cols = r["columns"] or (list(data[0].keys()) if data else [])
 
-    source_labels = {
-        "demo_db": "Demo Database",
-        "custom_db": "Custom Database",
-        "uploaded_tables": "Uploaded CSV"
-    }
-    source_label = source_labels.get(r.get("source", ""), "Database")
-
-    if data:
-        header = "".join(f"<th>{c}</th>" for c in cols)
-        rows_html = ""
-        for row in data[:100]:
-            cells = "".join(f"<td>{row.get(c, '')}</td>" for c in cols)
-            rows_html += f"<tr>{cells}</tr>"
-        table_html = f"""
-        <div class="table-wrap">
-            <table>
-                <thead><tr>{header}</tr></thead>
-                <tbody>{rows_html}</tbody>
-            </table>
-        </div>"""
-    else:
-        table_html = '<div class="empty">No results returned</div>'
-
-    sql_section = f'<div class="section"><div class="section-title">Generated SQL</div><pre class="sql">{r["sql"]}</pre></div>' if r["sql"] else ""
-
-    html = f"""<!DOCTYPE html>
+_RESULT_PAGE_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>DB Assistant — Results</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-  body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    background: #0a0e1a; color: #e2e8f0; min-height: 100vh; padding: 32px 24px; }}
-  .container {{ max-width: 1100px; margin: 0 auto; }}
-  .header {{ background: linear-gradient(135deg, #1e1b4b, #0f172a);
-    border: 1px solid #1e2d45; border-radius: 14px; padding: 20px 24px; margin-bottom: 20px; }}
-  .badge {{ background: rgba(99,102,241,0.15); border: 1px solid rgba(99,102,241,0.3);
-    color: #818cf8; font-size: 11px; font-weight: 700; padding: 4px 10px;
-    border-radius: 6px; text-transform: uppercase; letter-spacing: 0.08em; display: inline-block; margin-bottom: 10px; }}
-  h1 {{ font-size: 20px; font-weight: 800; color: #f1f5f9; margin-bottom: 4px; }}
-  .source {{ font-size: 12px; color: #94a3b8; }}
-  .stats {{ display: flex; gap: 12px; margin-bottom: 16px; }}
-  .stat {{ background: #111827; border: 1px solid #1e2d45; border-radius: 10px;
-    padding: 14px 18px; flex: 1; }}
-  .stat-val {{ font-size: 24px; font-weight: 900; color: #818cf8; }}
-  .stat-label {{ font-size: 11px; color: #64748b; margin-top: 2px; }}
-  .section {{ background: #111827; border: 1px solid #1e2d45; border-radius: 12px;
-    padding: 18px 20px; margin-bottom: 16px; }}
-  .section-title {{ font-size: 10px; font-weight: 700; color: #64748b;
-    text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 12px; }}
-  .sql {{ font-family: "JetBrains Mono", monospace; font-size: 12px; color: #93c5fd;
-    background: #0f1729; border: 1px solid #1e2d45; border-radius: 8px;
-    padding: 14px 16px; overflow-x: auto; white-space: pre-wrap; line-height: 1.6; }}
-  .table-wrap {{ overflow-x: auto; }}
-  table {{ width: 100%; border-collapse: collapse; font-size: 12px; }}
-  thead tr {{ background: #1a2234; }}
-  th {{ padding: 10px 12px; text-align: left; font-size: 10px; font-weight: 700;
-    color: #64748b; text-transform: uppercase; border-bottom: 1px solid #1e2d45; }}
-  td {{ padding: 9px 12px; border-bottom: 1px solid #1e2d4520; color: #cbd5e1; }}
-  tr:hover td {{ background: rgba(99,102,241,0.05); }}
-  .empty {{ text-align: center; padding: 40px; color: #64748b; }}
-  .footer {{ text-align: center; margin-top: 24px; font-size: 12px; color: #334155; }}
-  .footer a {{ color: #818cf8; text-decoration: none; }}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:#0a0e1a;color:#e2e8f0;font-family:'DM Sans',-apple-system,sans-serif;min-height:100vh;line-height:1.5}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#1e2d45;border-radius:3px}
+
+/* Header */
+.ph{background:rgba(10,14,26,0.95);border-bottom:1px solid #1e2d45;padding:0;position:sticky;top:0;z-index:100;backdrop-filter:blur(12px)}
+.phi{max-width:1200px;margin:0 auto;padding:14px 28px;display:flex;align-items:center;gap:14px}
+.phlogo{width:34px;height:34px;background:linear-gradient(135deg,#6366f1,#8b5cf6);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#fff;flex-shrink:0;box-shadow:0 0 14px rgba(99,102,241,0.4)}
+.phbrand{font-size:13px;font-weight:700;color:rgba(255,255,255,0.9);white-space:nowrap}
+.phsep{color:#1e2d45;font-size:16px;margin:0 2px}
+.phq{font-size:12px;color:#475569;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.srcbadge{flex-shrink:0;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;padding:3px 10px;border-radius:20px;background:rgba(99,102,241,.15);border:1px solid rgba(99,102,241,.3);color:#818cf8}
+.copybtn{flex-shrink:0;display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:#475569;background:rgba(255,255,255,.04);border:1px solid #1e2d45;border-radius:7px;padding:5px 11px;cursor:pointer;transition:all .15s;font-family:inherit}
+.copybtn:hover{background:rgba(255,255,255,.08);color:#94a3b8}
+.copybtn.ok{color:#10b981;border-color:rgba(16,185,129,.3)}
+
+/* Main */
+.main{max-width:1200px;margin:0 auto;padding:28px 28px 48px}
+
+/* Hero */
+.qhero{background:linear-gradient(135deg,#111827,#0f1520);border:1px solid #1e2d45;border-radius:14px;padding:26px 30px;margin-bottom:18px;position:relative;overflow:hidden}
+.qhero::before{content:'';position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);background-size:32px 32px;pointer-events:none}
+.qhero::after{content:'';position:absolute;top:-60px;right:-60px;width:260px;height:260px;background:radial-gradient(circle,rgba(99,102,241,.14) 0%,transparent 65%);pointer-events:none}
+.qlabel{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:#818cf8;margin-bottom:8px;position:relative;z-index:1}
+.qtext{font-size:1.35rem;font-weight:700;color:#f1f5f9;line-height:1.35;position:relative;z-index:1}
+
+/* Stats */
+.statsrow{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px}
+.scard{background:#111827;border:1px solid #1e2d45;border-radius:10px;padding:16px 18px}
+.scval{font-size:1.75rem;font-weight:800;color:#818cf8;line-height:1;margin-bottom:5px}
+.scval.green{font-size:.85rem;font-weight:600;color:#10b981;display:flex;align-items:center;gap:5px;margin-top:6px}
+.sclabel{font-size:.67rem;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:#334155}
+
+/* Cards */
+.sc{background:#111827;border:1px solid #1e2d45;border-radius:12px;overflow:hidden;margin-bottom:18px}
+.sch{display:flex;align-items:center;justify-content:space-between;padding:11px 16px;border-bottom:1px solid #1e2d45;background:#0f1520}
+.scht{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:#334155}
+.schact{display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:#818cf8;background:none;border:none;cursor:pointer;font-family:inherit;padding:3px 8px;border-radius:5px;transition:all .15s}
+.schact:hover{background:rgba(99,102,241,.12)}
+.schact.ok{color:#10b981}
+
+/* SQL */
+pre.sqlpre{padding:16px 20px;font-family:'JetBrains Mono',monospace;font-size:12.5px;line-height:1.8;overflow-x:auto;white-space:pre-wrap;word-break:break-word}
+.skw{color:#c084fc;font-weight:600}
+.sfn{color:#67e8f9}
+.sstr{color:#86efac}
+.snum{color:#fbbf24}
+.sdef{color:#93c5fd}
+
+/* Chart */
+.chartpad{padding:20px}
+.chartwrap{position:relative;height:300px}
+.chartmeta{display:flex;align-items:center;gap:8px}
+.chartbadge{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:#334155;background:rgba(255,255,255,.04);border:1px solid #1e2d45;border-radius:4px;padding:2px 8px}
+
+/* Table */
+.twrap{overflow-x:auto}
+table.rt{width:100%;border-collapse:collapse;font-size:12.5px}
+table.rt thead tr{background:#0f1520;border-bottom:1px solid #1e2d45}
+table.rt th{padding:10px 14px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#334155;cursor:pointer;user-select:none;white-space:nowrap;transition:color .15s}
+table.rt th:hover{color:#818cf8}
+table.rt th.srt{color:#818cf8}
+table.rt tbody tr{border-bottom:1px solid rgba(30,45,69,.45);transition:background .1s}
+table.rt tbody tr:hover{background:rgba(99,102,241,.05)}
+table.rt td{padding:9px 14px;color:#94a3b8;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+table.rt td.num{color:#c4b5fd;font-family:'JetBrains Mono',monospace;font-size:12px}
+table.rt td.rn{color:#1e2d45;font-size:11px;font-family:'JetBrains Mono',monospace;width:44px;text-align:right;padding-right:8px}
+.tfoot{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-top:1px solid #1e2d45;background:#0f1520;font-size:11px;color:#334155}
+
+/* Footer */
+.pfooter{border-top:1px solid #1e2d45;margin-top:8px;padding:20px 28px;display:flex;align-items:center;justify-content:space-between;font-size:11px;color:#1e2d45;max-width:1200px;margin-left:auto;margin-right:auto}
+.pfooter a{color:#334155;text-decoration:none;transition:color .15s}
+.pfooter a:hover{color:#818cf8}
+
+@keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.fu{animation:fadeUp .35s ease forwards}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media(max-width:768px){
+  .main{padding:16px 14px 40px}
+  .statsrow{grid-template-columns:repeat(2,1fr)}
+  .phq{display:none}
+  .qtext{font-size:1.1rem}
+}
 </style>
 </head>
 <body>
-<div class="container">
-  <div class="header">
-    <div class="badge">DB Assistant · {source_label}</div>
-    <h1>{r["question"][:120]}</h1>
-  </div>
-  <div class="stats">
-    <div class="stat"><div class="stat-val">{len(data)}</div><div class="stat-label">Rows Returned</div></div>
-    <div class="stat"><div class="stat-val">{len(cols)}</div><div class="stat-label">Columns</div></div>
-    <div class="stat"><div class="stat-val">82%</div><div class="stat-label">KDD Cup Accuracy</div></div>
-  </div>
-  {sql_section}
-  <div class="section">
-    <div class="section-title">Results ({len(data)} rows)</div>
-    {table_html}
-  </div>
-  <div class="footer">
-    Powered by <a href="{FRONTEND_URL}" target="_blank">DB Assistant</a> ·
-    SJSU CMPE 295B · KDD Cup 2026: 82%
+
+<div class="ph">
+  <div class="phi">
+    <div class="phlogo">DB</div>
+    <span class="phbrand">DB Assistant</span>
+    <span class="phsep">/</span>
+    <span class="phq">TMPL_QUESTION</span>
+    <span class="srcbadge">TMPL_SOURCE</span>
+    <button class="copybtn" id="cbtn" onclick="copyURL()">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+      Share
+    </button>
   </div>
 </div>
+
+<div class="main">
+
+  <div class="qhero fu">
+    <div class="qlabel">Natural Language Query</div>
+    <div class="qtext">TMPL_QUESTION</div>
+  </div>
+
+  <div class="statsrow fu" style="animation-delay:.05s">
+    <div class="scard"><div class="scval">TMPL_ROWS</div><div class="sclabel">Rows returned</div></div>
+    <div class="scard"><div class="scval">TMPL_COLS</div><div class="sclabel">Columns</div></div>
+    <div class="scard"><div class="scval" style="font-size:.9rem;font-weight:600;color:#94a3b8;margin-top:4px">TMPL_SOURCE</div><div class="sclabel">Data source</div></div>
+    <div class="scard">
+      <div class="scval green">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+        Success
+      </div>
+      <div class="sclabel">Query status</div>
+    </div>
+  </div>
+
+  TMPL_SQL_SECTION
+
+  <div class="sc fu" style="animation-delay:.15s" id="chartcard">
+    <div class="sch">
+      <span class="scht">Data Visualization</span>
+      <div class="chartmeta">
+        <span class="chartbadge" id="chartbadge"></span>
+      </div>
+    </div>
+    <div class="chartpad">
+      <div class="chartwrap"><canvas id="myChart"></canvas></div>
+    </div>
+  </div>
+
+  <div class="sc fu" style="animation-delay:.2s">
+    <div class="sch">
+      <span class="scht">Results — TMPL_ROWS rows</span>
+      <button class="schact" id="expbtn" onclick="exportCSV()">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Export CSV
+      </button>
+    </div>
+    <div class="twrap"><table class="rt"><thead id="thead"></thead><tbody id="tbody"></tbody></table></div>
+    <div class="tfoot"><span id="tinfo"></span><span style="color:#1e2d45">Click column header to sort</span></div>
+  </div>
+
+</div>
+
+<div class="pfooter">
+  <span>Powered by <a href="TMPL_FRONTEND" target="_blank">DB Assistant</a> &middot; SJSU CMPE 295B</span>
+  <span style="display:flex;gap:16px"><a href="TMPL_FRONTEND" target="_blank">Dashboard</a><a href="https://github.com/rutuja-patil24/database-assistant" target="_blank">GitHub</a></span>
+</div>
+
+<script>
+const DATA = TMPL_DATA_JSON;
+const COLS = TMPL_COLS_JSON;
+
+function isNum(v){return v!==null&&v!==''&&!isNaN(parseFloat(v))&&isFinite(v)}
+function isDate(c){return /date|time|year|month|quarter|week|day/i.test(c)}
+function esc(v){return String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function fmt(v){if(v===null||v===undefined)return '<span style="color:#1e2d45">null</span>';if(isNum(v)){const n=parseFloat(v);return Number.isInteger(n)?n.toLocaleString():n.toLocaleString(undefined,{maximumFractionDigits:4})}return esc(String(v))}
+
+/* ── Chart ── */
+const PALETTE=[
+  {bg:'rgba(99,102,241,.8)',  bd:'#818cf8'},
+  {bg:'rgba(139,92,246,.8)', bd:'#a78bfa'},
+  {bg:'rgba(59,130,246,.8)', bd:'#60a5fa'},
+  {bg:'rgba(16,185,129,.8)', bd:'#34d399'},
+  {bg:'rgba(245,158,11,.8)', bd:'#fbbf24'},
+  {bg:'rgba(239,68,68,.8)',  bd:'#f87171'},
+  {bg:'rgba(14,165,233,.8)', bd:'#38bdf8'},
+  {bg:'rgba(168,85,247,.8)', bd:'#c084fc'},
+];
+
+function buildChart(){
+  if(!DATA.length){document.getElementById('chartcard').style.display='none';return}
+  const numCols=COLS.filter(c=>DATA.every(r=>isNum(r[c])));
+  const catCols=COLS.filter(c=>!numCols.includes(c));
+  if(!numCols.length){document.getElementById('chartcard').style.display='none';return}
+
+  const labelCol=catCols[0]||null;
+  const dispNums=numCols.slice(0,5);
+  const useLine=Boolean(labelCol&&isDate(labelCol))||DATA.length>18;
+  const labels=labelCol?DATA.map(r=>String(r[labelCol]??'')):DATA.map((_,i)=>String(i+1));
+
+  document.getElementById('chartbadge').textContent=(useLine?'Line':'Bar')+' chart';
+  Chart.defaults.color='#475569';
+  Chart.defaults.borderColor='#1e2d45';
+  Chart.defaults.font.family="'DM Sans',sans-serif";
+
+  const datasets=dispNums.map((col,i)=>{
+    const p=PALETTE[i%PALETTE.length];
+    const vals=DATA.map(r=>parseFloat(r[col])||0);
+    if(useLine){
+      return{label:col,data:vals,borderColor:p.bd,backgroundColor:p.bg.replace('.8','.1'),
+        borderWidth:2.5,pointRadius:DATA.length<=20?4:0,pointHoverRadius:6,
+        pointBackgroundColor:p.bd,tension:.4,fill:dispNums.length===1};
+    }
+    const multiColor=dispNums.length===1;
+    return{label:col,data:vals,
+      backgroundColor:multiColor?DATA.map((_,j)=>PALETTE[j%PALETTE.length].bg):p.bg,
+      borderColor:multiColor?DATA.map((_,j)=>PALETTE[j%PALETTE.length].bd):p.bd,
+      borderWidth:1.5,borderRadius:6,borderSkipped:false};
+  });
+
+  new Chart(document.getElementById('myChart').getContext('2d'),{
+    type:useLine?'line':'bar',
+    data:{labels,datasets},
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      animation:{duration:900,easing:'easeOutQuart'},
+      plugins:{
+        legend:{display:dispNums.length>1,labels:{color:'#64748b',font:{size:11},boxWidth:12,padding:16}},
+        tooltip:{backgroundColor:'#1a2234',borderColor:'#1e2d45',borderWidth:1,
+          titleColor:'#f1f5f9',bodyColor:'#94a3b8',padding:10,cornerRadius:8,
+          callbacks:{label:c=>` ${c.dataset.label||'Value'}: ${Number(c.parsed.y).toLocaleString()}`}}
+      },
+      scales:{
+        x:{grid:{color:'rgba(30,45,69,.4)',drawBorder:false},
+           ticks:{color:'#334155',maxRotation:30,font:{size:11},maxTicksLimit:14}},
+        y:{grid:{color:'rgba(30,45,69,.4)',drawBorder:false},
+           ticks:{color:'#334155',font:{size:11},callback:v=>Number(v).toLocaleString()},
+           beginAtZero:true}
+      }
+    }
+  });
+}
+
+/* ── Table ── */
+let sortCol=null,sortAsc=true;
+function buildTable(rows){
+  const r=rows||DATA;
+  const numCols=new Set(COLS.filter(c=>r.every(row=>isNum(row[c]))));
+  document.getElementById('thead').innerHTML=
+    '<tr><th style="cursor:default;width:44px;color:#1e2d45">#</th>'+
+    COLS.map(c=>`<th onclick="sortBy('${c}')" class="${sortCol===c?'srt':''}">${esc(c)} <span style="opacity:.4">${sortCol===c?(sortAsc?'▲':'▼'):'↕'}</span></th>`).join('')+
+    '</tr>';
+  document.getElementById('tbody').innerHTML=
+    r.map((row,i)=>'<tr><td class="rn">'+(i+1)+'</td>'+
+      COLS.map(c=>`<td class="${numCols.has(c)?'num':''}" title="${esc(String(row[c]??''))}">${fmt(row[c])}</td>`).join('')+
+    '</tr>').join('');
+  document.getElementById('tinfo').textContent=r.length+' rows · '+COLS.length+' columns';
+}
+function sortBy(col){
+  if(sortCol===col)sortAsc=!sortAsc;else{sortCol=col;sortAsc=true}
+  const s=[...DATA].sort((a,b)=>{
+    const va=a[col],vb=b[col];
+    if(isNum(va)&&isNum(vb))return sortAsc?va-vb:vb-va;
+    return sortAsc?String(va).localeCompare(String(vb)):String(vb).localeCompare(String(va));
+  });
+  buildTable(s);
+}
+
+/* ── SQL highlighting ── */
+function hlSQL(sql){
+  if(!sql)return'';
+  const KW=['SELECT','FROM','WHERE','GROUP BY','ORDER BY','HAVING','JOIN','LEFT','RIGHT','INNER','OUTER','ON','AS','AND','OR','NOT','IN','LIKE','BETWEEN','LIMIT','OFFSET','DISTINCT','BY','WITH','UNION','ALL','CASE','WHEN','THEN','ELSE','END'];
+  const FN=['COUNT','SUM','AVG','MAX','MIN','COALESCE','NULLIF','CAST','ROUND','FLOOR','CEIL','ABS','UPPER','LOWER','TRIM','LENGTH','SUBSTR','CONCAT','NOW','DATE','TO_DATE'];
+  let s=esc(sql);
+  KW.forEach(k=>{s=s.replace(new RegExp('\\b'+k+'\\b','gi'),m=>`<span class="skw">${m}</span>`)});
+  FN.forEach(f=>{s=s.replace(new RegExp('\\b'+f+'\\b','gi'),m=>`<span class="sfn">${m}</span>`)});
+  s=s.replace(/'([^']*)'/g,"<span class=\"sstr\">'$1'</span>");
+  s=s.replace(/\\b(\\d+\\.?\\d*)\\b/g,'<span class="snum">$1</span>');
+  return`<span class="sdef">${s}</span>`;
+}
+function copySQL(){
+  const t=document.getElementById('rawsql').textContent;
+  navigator.clipboard.writeText(t).then(()=>{
+    const b=document.getElementById('csqlbtn');
+    b.classList.add('ok');b.textContent='✓ Copied';
+    setTimeout(()=>{b.classList.remove('ok');b.innerHTML='<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy SQL';},2000);
+  });
+}
+function copyURL(){
+  navigator.clipboard.writeText(location.href).then(()=>{
+    const b=document.getElementById('cbtn');
+    b.classList.add('ok');b.textContent='✓ Copied';
+    setTimeout(()=>{b.classList.remove('ok');b.innerHTML='<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Share';},2000);
+  });
+}
+function exportCSV(){
+  const hdr=COLS.join(',');
+  const rows=DATA.map(r=>COLS.map(c=>{const v=String(r[c]??'');return v.includes(',')||v.includes('"')?`"${v.replace(/"/g,'""')}"`:''+v}).join(','));
+  const a=document.createElement('a');
+  a.href='data:text/csv;charset=utf-8,'+encodeURIComponent([hdr,...rows].join('\\n'));
+  a.download='results.csv';a.click();
+  const b=document.getElementById('expbtn');
+  b.textContent='✓ Exported';
+  setTimeout(()=>{b.innerHTML='<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Export CSV';},2000);
+}
+
+window.addEventListener('DOMContentLoaded',()=>{
+  buildChart();
+  buildTable();
+  const el=document.getElementById('sqldisplay');
+  const raw=document.getElementById('rawsql');
+  if(el&&raw)el.innerHTML=hlSQL(raw.textContent);
+});
+</script>
 </body>
 </html>"""
+
+
+@router.get("/results/{result_id}", response_class=HTMLResponse, include_in_schema=False)
+def result_page(result_id: str):
+    """Shareable result page with chart, sortable table, and CSV export."""
+    r = _result_store.get(result_id)
+    if not r:
+        return HTMLResponse(
+            "<h2 style='font-family:sans-serif;padding:40px;color:#666'>Result not found or expired.</h2>",
+            status_code=404
+        )
+
+    data    = r["data"]
+    cols    = r["columns"] or (list(data[0].keys()) if data else [])
+    sql     = r.get("sql", "")
+    question = r.get("question", "")
+
+    source_labels = {"demo_db": "Demo Database", "custom_db": "Custom Database", "uploaded_tables": "Uploaded CSV"}
+    source_label  = source_labels.get(r.get("source", ""), "Database")
+
+    if sql:
+        sql_section = (
+            '<div class="sc fu" style="animation-delay:.1s">'
+            '<div class="sch">'
+            '<span class="scht">Generated SQL</span>'
+            '<button class="schact" id="csqlbtn" onclick="copySQL()">'
+            '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'
+            '<rect x="9" y="9" width="13" height="13" rx="2"/>'
+            '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
+            ' Copy SQL</button></div>'
+            f'<pre class="sqlpre" id="sqldisplay"><span id="rawsql">{_esc(sql)}</span></pre>'
+            '</div>'
+        )
+    else:
+        sql_section = ""
+
+    html = _RESULT_PAGE_TEMPLATE
+    html = html.replace("TMPL_QUESTION",  _esc(question))
+    html = html.replace("TMPL_SOURCE",    _esc(source_label))
+    html = html.replace("TMPL_ROWS",      str(len(data)))
+    html = html.replace("TMPL_COLS",      str(len(cols)))
+    html = html.replace("TMPL_SQL_SECTION", sql_section)
+    html = html.replace("TMPL_DATA_JSON", json.dumps(data[:200]))
+    html = html.replace("TMPL_COLS_JSON", json.dumps(cols))
+    html = html.replace("TMPL_FRONTEND",  FRONTEND_URL)
     return HTMLResponse(html)
 
 
