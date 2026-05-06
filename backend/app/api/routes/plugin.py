@@ -582,7 +582,7 @@ function hlSQL(sql){
   let s=esc(sql);
   KW.forEach(k=>{s=s.replace(new RegExp('\\b'+k+'\\b','gi'),m=>`<span class="skw">${m}</span>`)});
   FN.forEach(f=>{s=s.replace(new RegExp('\\b'+f+'\\b','gi'),m=>`<span class="sfn">${m}</span>`)});
-  s=s.replace(/'([^']*)'/g,"<span class=\"sstr\">'$1'</span>");
+  s=s.replace(/'([^']*)'/g,"<span class='sstr'>'$1'</span>");
   s=s.replace(/\\b(\\d+\\.?\\d*)\\b/g,'<span class="snum">$1</span>');
   return`<span class="sdef">${s}</span>`;
 }
