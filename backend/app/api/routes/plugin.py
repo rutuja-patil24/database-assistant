@@ -361,3 +361,283 @@ def result_page(result_id: str):
 </body>
 </html>"""
     return HTMLResponse(html)
+
+
+# ── Plugin UI ─────────────────────────────────────────────────────────────────
+
+_PLUGIN_UI_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DB Assistant</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0a0e1a;color:#e2e8f0;min-height:100vh}
+.header{background:linear-gradient(135deg,#1e1b4b,#0f172a);border-bottom:1px solid #1e2d45;padding:20px 32px;display:flex;align-items:center;gap:16px}
+.logo{width:42px;height:42px;background:#1e1b4b;border:1px solid rgba(129,140,248,.35);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:900;color:#818cf8;flex-shrink:0}
+.hdr-title{font-size:20px;font-weight:800;color:#f1f5f9}
+.hdr-sub{font-size:12px;color:#64748b;margin-top:2px}
+.badge{margin-left:auto;background:rgba(99,102,241,.15);border:1px solid rgba(99,102,241,.3);color:#818cf8;font-size:11px;font-weight:700;padding:4px 14px;border-radius:20px;white-space:nowrap}
+.container{max-width:920px;margin:0 auto;padding:32px 24px}
+.tabs{display:flex;gap:4px;background:#111827;border:1px solid #1e2d45;border-radius:12px;padding:4px;margin-bottom:24px}
+.tab{flex:1;padding:10px;text-align:center;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;color:#64748b;transition:all .15s;border:none;background:none}
+.tab:hover{color:#94a3b8;background:rgba(255,255,255,.03)}
+.tab.active{background:rgba(99,102,241,.15);color:#818cf8;border:1px solid rgba(99,102,241,.2)}
+.panel{display:none}.panel.active{display:block}
+.card{background:#111827;border:1px solid #1e2d45;border-radius:12px;padding:20px;margin-bottom:16px}
+.card-title{font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.1em;margin-bottom:14px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}
+.chip{background:rgba(99,102,241,.1);border:1px solid rgba(99,102,241,.2);color:#a5b4fc;padding:6px 14px;border-radius:20px;font-size:12px;cursor:pointer;transition:all .15s}
+.chip:hover{background:rgba(99,102,241,.2);border-color:rgba(99,102,241,.4)}
+.input-row{display:flex;gap:10px}
+input[type=text],textarea{width:100%;background:#0f1729;border:1px solid #1e2d45;border-radius:8px;color:#e2e8f0;padding:11px 14px;font-size:14px;outline:none;font-family:inherit;transition:border-color .15s}
+input[type=text]:focus,textarea:focus{border-color:rgba(99,102,241,.5)}
+textarea{resize:vertical;min-height:80px}
+.btn{background:#4f46e5;color:#fff;border:none;border-radius:8px;padding:11px 22px;font-size:13px;font-weight:700;cursor:pointer;transition:all .15s;white-space:nowrap}
+.btn:hover{background:#4338ca}.btn:disabled{opacity:.5;cursor:not-allowed}
+.sql-block{font-family:"JetBrains Mono","Fira Code",monospace;font-size:12px;color:#93c5fd;background:#0f1729;border:1px solid #1e2d45;border-radius:8px;padding:14px 16px;overflow-x:auto;white-space:pre-wrap;line-height:1.6}
+.table-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:12px}
+thead tr{background:#1a2234}
+th{padding:10px 12px;text-align:left;font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid #1e2d45}
+td{padding:9px 12px;border-bottom:1px solid rgba(30,45,69,.5);color:#cbd5e1}
+tr:hover td{background:rgba(99,102,241,.04)}
+.stats{display:flex;gap:10px;margin-bottom:16px}
+.stat{background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.15);border-radius:8px;padding:12px 16px;flex:1;text-align:center}
+.stat-val{font-size:20px;font-weight:900;color:#818cf8}
+.stat-label{font-size:10px;color:#64748b;margin-top:2px}
+.result-link{display:inline-flex;align-items:center;gap:6px;color:#818cf8;font-size:13px;text-decoration:none;border:1px solid rgba(99,102,241,.3);border-radius:8px;padding:8px 14px;transition:all .15s;margin-top:14px}
+.result-link:hover{background:rgba(99,102,241,.1)}
+.tag-list{display:flex;flex-wrap:wrap;gap:8px}
+.tag{background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.2);color:#6ee7b7;padding:4px 12px;border-radius:6px;font-size:12px;font-family:monospace}
+.code-block{background:#0f1729;border:1px solid #1e2d45;border-radius:8px;padding:14px 16px 14px 16px;font-family:"JetBrains Mono","Fira Code",monospace;font-size:12px;color:#93c5fd;white-space:pre;overflow-x:auto;position:relative;margin-bottom:16px}
+.copy-btn{position:absolute;top:8px;right:8px;background:rgba(99,102,241,.15);border:1px solid rgba(99,102,241,.3);color:#818cf8;border-radius:6px;padding:3px 10px;font-size:11px;cursor:pointer;font-family:inherit}
+.copy-btn:hover{background:rgba(99,102,241,.25)}
+.status{border-radius:8px;padding:12px 16px;font-size:13px;margin-top:12px}
+.status.success{background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.2);color:#6ee7b7}
+.status.error{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.2);color:#fca5a5}
+.section-label{font-size:11px;font-weight:600;color:#64748b;margin-bottom:8px;text-transform:uppercase;letter-spacing:.08em}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(129,140,248,.3);border-top-color:#818cf8;border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:8px}
+.loading-card{background:#111827;border:1px solid #1e2d45;border-radius:12px;padding:30px;text-align:center;color:#64748b;margin-bottom:16px}
+.hidden{display:none!important}
+.empty-state{text-align:center;padding:32px;color:#64748b;font-size:13px}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">DB</div>
+  <div>
+    <div class="hdr-title">DB Assistant</div>
+    <div class="hdr-sub">Natural Language Database Queries &middot; Powered by Gemini AI</div>
+  </div>
+  <div class="badge">82% KDD Cup 2026</div>
+</div>
+
+<div class="container">
+
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('demo',this)">&#127756; Demo Database</button>
+    <button class="tab" onclick="switchTab('connect',this)">&#128268; Connect Your DB</button>
+    <button class="tab" onclick="switchTab('cli',this)">&#128187; Claude Code CLI</button>
+  </div>
+
+  <!-- ── Demo DB ── -->
+  <div class="panel active" id="panel-demo">
+    <div class="card">
+      <div class="card-title">Sample Questions &mdash; click to try</div>
+      <div class="chips">
+        <div class="chip" onclick="setQ(this)">How many employees are in each department?</div>
+        <div class="chip" onclick="setQ(this)">What is the average salary by department?</div>
+        <div class="chip" onclick="setQ(this)">Which department has the highest budget?</div>
+        <div class="chip" onclick="setQ(this)">Show top 5 orders by revenue</div>
+        <div class="chip" onclick="setQ(this)">What is total revenue by product?</div>
+        <div class="chip" onclick="setQ(this)">List all employees in Engineering</div>
+      </div>
+      <div class="input-row">
+        <input type="text" id="demo-q" placeholder="Ask anything about employees, departments, orders, sales..." onkeydown="if(event.key==='Enter')runDemo()"/>
+        <button class="btn" id="demo-btn" onclick="runDemo()">Run Query</button>
+      </div>
+    </div>
+
+    <div id="demo-loading" class="loading-card hidden"><span class="spinner"></span>Generating SQL and fetching results&hellip;</div>
+    <div id="demo-error" class="status error hidden"></div>
+
+    <div id="demo-result" class="hidden">
+      <div class="stats">
+        <div class="stat"><div class="stat-val" id="d-rows">0</div><div class="stat-label">Rows</div></div>
+        <div class="stat"><div class="stat-val" id="d-cols">0</div><div class="stat-label">Columns</div></div>
+        <div class="stat"><div class="stat-val">Neon</div><div class="stat-label">Demo DB</div></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Generated SQL</div>
+        <div class="sql-block" id="d-sql"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Results</div>
+        <div class="table-wrap" id="d-table"></div>
+        <a id="d-link" href="#" target="_blank" class="result-link">&#8599; View Full Results Page</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Connect DB ── -->
+  <div class="panel" id="panel-connect">
+    <div class="card">
+      <div class="card-title">PostgreSQL Connection String</div>
+      <textarea id="conn-str" placeholder="postgresql://username:password@host:5432/database&#10;&#10;Works with: Neon, Supabase, RDS, Cloud SQL, local PostgreSQL&hellip;"></textarea>
+      <div style="margin-top:12px;display:flex;gap:10px;align-items:center">
+        <button class="btn" id="conn-btn" onclick="testConn()">Test &amp; Connect</button>
+        <span style="font-size:12px;color:#64748b">Not stored permanently &mdash; session only</span>
+      </div>
+    </div>
+
+    <div id="conn-loading" class="loading-card hidden"><span class="spinner"></span>Testing connection&hellip;</div>
+    <div id="conn-error" class="status error hidden"></div>
+
+    <div id="conn-result" class="hidden">
+      <div class="card">
+        <div class="card-title">Tables Found</div>
+        <div class="tag-list" id="conn-tables"></div>
+      </div>
+      <div class="status success" id="conn-status"></div>
+    </div>
+  </div>
+
+  <!-- ── Claude Code CLI ── -->
+  <div class="panel" id="panel-cli">
+    <div class="card">
+      <div class="card-title">Install</div>
+      <p style="font-size:13px;color:#94a3b8;margin-bottom:16px">Use DB Assistant slash commands directly inside Claude Code.</p>
+
+      <div class="section-label">1. Install Claude Code CLI</div>
+      <div class="code-block">npm install -g @anthropic-ai/claude-code<button class="copy-btn" onclick="cp(this)">Copy</button></div>
+
+      <div class="section-label">2. Install the DB Assistant plugin</div>
+      <div class="code-block">claude plugins install https://github.com/rutuja-patil24/database-assistant/tree/main/db-assistant-plugin<button class="copy-btn" onclick="cp(this)">Copy</button></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Commands</div>
+
+      <div style="margin-bottom:16px">
+        <div class="section-label">Query the demo database</div>
+        <div class="code-block">/db-assistant:query How many employees are in each department?<button class="copy-btn" onclick="cp(this)">Copy</button></div>
+      </div>
+
+      <div style="margin-bottom:16px">
+        <div class="section-label">Connect your own database</div>
+        <div class="code-block">/db-assistant:connect postgresql://user:pass@host/db<button class="copy-btn" onclick="cp(this)">Copy</button></div>
+      </div>
+
+      <div>
+        <div class="section-label">View KDD Cup benchmark scores</div>
+        <div class="code-block">/db-assistant:benchmark<button class="copy-btn" onclick="cp(this)">Copy</button></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Demo Database Tables</div>
+      <div class="tag-list">
+        <span class="tag">employees &mdash; 50 rows</span>
+        <span class="tag">departments &mdash; 10 rows</span>
+        <span class="tag">orders &mdash; 200 rows</span>
+        <span class="tag">sales_performance &mdash; 40 rows</span>
+      </div>
+      <p style="font-size:12px;color:#64748b;margin-top:12px">Pre-loaded Neon PostgreSQL &mdash; no setup needed.</p>
+    </div>
+  </div>
+
+</div><!-- /container -->
+
+<script>
+function switchTab(name, btn) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('panel-' + name).classList.add('active');
+}
+function setQ(el) { document.getElementById('demo-q').value = el.textContent; }
+
+async function runDemo() {
+  const q = document.getElementById('demo-q').value.trim();
+  if (!q) return;
+  const btn = document.getElementById('demo-btn');
+  btn.disabled = true;
+  hide('demo-result'); hide('demo-error');
+  show('demo-loading');
+  try {
+    const r = await fetch('/plugin/query', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({question:q, tables:{}})
+    });
+    const d = await r.json();
+    hide('demo-loading');
+    if (d.error) { showErr('demo-error', d.error); return; }
+    const preview = d.preview || [];
+    const cols = preview.length ? Object.keys(preview[0]) : [];
+    document.getElementById('d-rows').textContent = d.row_count || 0;
+    document.getElementById('d-cols').textContent = cols.length;
+    document.getElementById('d-sql').textContent = d.sql || '';
+    document.getElementById('d-link').href = d.result_url || '#';
+    const wrap = document.getElementById('d-table');
+    if (preview.length) {
+      const hdr = cols.map(c => '<th>'+esc(c)+'</th>').join('');
+      const rows = preview.map(row =>
+        '<tr>'+cols.map(c => '<td>'+esc(row[c]!=null?row[c]:'')+'</td>').join('')+'</tr>'
+      ).join('');
+      wrap.innerHTML = '<table><thead><tr>'+hdr+'</tr></thead><tbody>'+rows+'</tbody></table>';
+    } else {
+      wrap.innerHTML = '<div class="empty-state">No results returned</div>';
+    }
+    show('demo-result');
+  } catch(e) { hide('demo-loading'); showErr('demo-error', e.message); }
+  finally { btn.disabled = false; }
+}
+
+async function testConn() {
+  const cs = document.getElementById('conn-str').value.trim();
+  if (!cs) return;
+  const btn = document.getElementById('conn-btn');
+  btn.disabled = true;
+  hide('conn-result'); hide('conn-error');
+  show('conn-loading');
+  try {
+    const r = await fetch('/plugin/connect', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({connection_string:cs, session_id:'ui-'+Date.now()})
+    });
+    const d = await r.json();
+    hide('conn-loading');
+    if (!r.ok || !d.success) { showErr('conn-error', d.detail||d.error||'Connection failed'); return; }
+    const tables = d.tables_found || [];
+    document.getElementById('conn-tables').innerHTML = tables.map(t => '<span class="tag">'+esc(t)+'</span>').join('');
+    document.getElementById('conn-status').textContent = '✓ ' + (d.message||'Connected');
+    show('conn-result');
+  } catch(e) { hide('conn-loading'); showErr('conn-error', e.message); }
+  finally { btn.disabled = false; }
+}
+
+function cp(btn) {
+  const txt = btn.parentElement.textContent.replace(/Copy$|Copied!$/,'').trim();
+  navigator.clipboard.writeText(txt).then(() => {
+    btn.textContent = 'Copied!';
+    setTimeout(() => btn.textContent = 'Copy', 2000);
+  });
+}
+
+function show(id) { document.getElementById(id).classList.remove('hidden'); }
+function hide(id) { document.getElementById(id).classList.add('hidden'); }
+function showErr(id, msg) { const el=document.getElementById(id); el.textContent='Error: '+msg; el.classList.remove('hidden'); }
+function esc(v) { return String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+</script>
+</body>
+</html>"""
+
+
+@router.get("/plugin-ui", response_class=HTMLResponse, tags=["plugin"])
+def plugin_ui():
+    """Self-contained web UI for DB Assistant plugin."""
+    return HTMLResponse(_PLUGIN_UI_HTML)
