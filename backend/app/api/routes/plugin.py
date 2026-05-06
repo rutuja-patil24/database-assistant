@@ -620,7 +620,11 @@ def result_page(result_id: str):
     html = html.replace("TMPL_ROWS",      str(len(data)))
     html = html.replace("TMPL_COLS",      str(len(cols)))
     html = html.replace("TMPL_SQL_SECTION", sql_section)
-    html = html.replace("TMPL_DATA_JSON", json.dumps(data[:200]))
+    from decimal import Decimal
+    def _json_safe(obj):
+        if isinstance(obj, Decimal): return float(obj)
+        raise TypeError(type(obj).__name__)
+    html = html.replace("TMPL_DATA_JSON", json.dumps(data[:200], default=_json_safe))
     html = html.replace("TMPL_COLS_JSON", json.dumps(cols))
     html = html.replace("TMPL_FRONTEND",  FRONTEND_URL)
     return HTMLResponse(html)
