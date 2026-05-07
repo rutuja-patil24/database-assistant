@@ -106,13 +106,13 @@
 }
 .nav-item:hover  { background: #f8fafc; color: #0f172a; }
 .nav-item.active {
-  background: #eef2ff;
-  color: #6366f1;
-  border-left: 3px solid #6366f1;
+  background: #f5f3ff;
+  color: #5b21b6;
+  border-left: 3px solid #5b21b6;
   padding-left: 7px;
   font-weight: 600;
 }
-.nav-item.active .nav-icon { color: #6366f1; }
+.nav-item.active .nav-icon { color: #5b21b6; }
 .nav-icon  { flex-shrink: 0; }
 .nav-label { overflow: hidden; }
 

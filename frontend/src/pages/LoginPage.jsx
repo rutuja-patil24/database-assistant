@@ -6,8 +6,8 @@ import './AuthPages.css';
 
 const FEATURES = [
   { title: 'Natural Language to SQL', desc: 'Ask questions in plain English, get instant results' },
-  { title: 'Multi-Agent AI', desc: 'ReAct loops, Swarm agents, and self-correction' },
-  { title: '82% Benchmark Accuracy', desc: 'KDD Cup 2026 DataAgent-Bench results' },
+  { title: 'Multi-Agent AI',          desc: 'ReAct loops, Swarm agents, and self-correction' },
+  { title: 'Multi-Database Support',  desc: 'PostgreSQL, MySQL, MongoDB, Supabase & CSV uploads' },
 ];
 
 export default function LoginPage() {

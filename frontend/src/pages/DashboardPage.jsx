@@ -5,7 +5,7 @@ import { authAPI } from '../services/api';
 import {
   Database, Leaf, FolderOpen,
   ArrowRight, Zap, BarChart2,
-  MessageSquare, Sparkles, Shield, Link2,
+  MessageSquare, Sparkles, Shield, Link2, Users,
 } from 'lucide-react';
 import './DashboardPage.css';
 
@@ -47,10 +47,10 @@ export default function DashboardPage() {
   const name  = user?.displayName || user?.full_name || user?.email?.split('@')[0] || 'there';
 
   const STATS = [
-    { label: 'PostgreSQL DBs',   value: pg.length,    color: '#3b82f6', icon: Database  },
-    { label: 'MongoDB DBs',      value: mongo.length, color: '#10b981', icon: Leaf       },
-    { label: 'Benchmark Score',  value: '82%',        color: '#6366f1', icon: BarChart2  },
-    { label: 'AI Agents',        value: '3',          color: '#8b5cf6', icon: Zap        },
+    { label: 'PostgreSQL DBs',    value: pg.length,          color: '#3b82f6', icon: Database },
+    { label: 'MongoDB DBs',       value: mongo.length,       color: '#10b981', icon: Leaf     },
+    { label: 'MySQL DBs',         value: mysql.length,       color: '#f59e0b', icon: Database },
+    { label: 'Total Connections', value: connections.length, color: '#8b5cf6', icon: Link2    },
   ];
 
   return (
@@ -120,34 +120,6 @@ export default function DashboardPage() {
           ))}
         </div>
       </section>
-
-      {/* ── Benchmark highlight card ── */}
-      <div className="dash-bench-card dash-fade-up">
-        <div className="dash-bench-left">
-          <span className="dash-bench-badge">KDD Cup 2026</span>
-          <div className="dash-bench-score">82%</div>
-          <div className="dash-bench-label">Accuracy on DataAgent-Bench</div>
-          <button className="dash-bench-btn" onClick={() => navigate('/benchmark')}>
-            View Full Results →
-          </button>
-        </div>
-        <div className="dash-bench-right">
-          {[
-            { label: 'Easy',    pct: 92 },
-            { label: 'Medium',  pct: 85 },
-            { label: 'Hard',    pct: 74 },
-            { label: 'Extreme', pct: 61 },
-          ].map(r => (
-            <div key={r.label} className="dash-bench-row">
-              <span className="dash-bench-row-label">{r.label}</span>
-              <div className="dash-bench-bar-wrap">
-                <div className="dash-bench-bar-fill" style={{ width: `${r.pct}%` }} />
-              </div>
-              <span className="dash-bench-row-pct">{r.pct}%</span>
-            </div>
-          ))}
-        </div>
-      </div>
 
       {/* ── How it works ── */}
       <section className="dash-section dash-fade-up">
