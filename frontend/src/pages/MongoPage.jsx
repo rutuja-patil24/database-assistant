@@ -3,7 +3,7 @@ import { authAPI, mongoAPI } from '../services/api';
 import { splitQuestions } from '../utils/splitQuestions';
 import { Alert, Badge, EmptyState } from '../components/ui';
 import ResultsPanel from '../components/ui/ResultsPanel';
-import { Leaf, Send, Sparkles, CheckSquare, Square, ChevronDown, ChevronUp } from 'lucide-react';
+import { Leaf, Send, Sparkles, CheckSquare, Square, ChevronDown, ChevronUp, Zap } from 'lucide-react';
 import './ChatQueryPage.css';
 
 const SAMPLES = [
@@ -81,6 +81,8 @@ export default function MongoPage() {
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [history, loading]);
 
+  const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+
   const send = async () => {
     const q = input.trim();
     if (!q || loading) return;
@@ -95,9 +97,29 @@ export default function MongoPage() {
     try {
       const responses = await Promise.all(
         questions.map(({ display, query }) => {
-          const apiCall = selColls.length > 1
-            ? mongoAPI.nlQueryJoin({ mongo_uri: mongoUri, db_name: dbName, collections: selColls, question: query, limit: 100 })
-            : mongoAPI.nlQuery({ mongo_uri: mongoUri, db_name: dbName, collection: selColls[0], question: query, limit: 100 });
+          let apiCall;
+          if (selColls.length > 1) {
+            // Multi-collection: use $lookup join endpoint
+            apiCall = mongoAPI.nlQueryJoin({
+              mongo_uri: mongoUri, db_name: dbName,
+              collections: selColls, question: query, limit: 100,
+            });
+          } else {
+            // Single collection: use nl-query-auto with ReAct loop
+            apiCall = fetch(`${API_BASE}/mongo/nl-query-auto`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                mongo_uri: mongoUri, db_name: dbName,
+                collection: selColls[0], question: query,
+                limit: 100, react: true,
+              }),
+            }).then(async r => {
+              const data = await r.json();
+              if (!r.ok) throw new Error(data?.detail || `Failed (${r.status})`);
+              return { data };
+            });
+          }
           return apiCall
             .then(r => ({ ok: true, question: display, data: r.data }))
             .catch(e => ({ ok: false, question: display, error: e.response?.data?.detail || e.message }));
@@ -183,6 +205,17 @@ export default function MongoPage() {
         <div className="cqp-chat-header">
           <Leaf size={15}/>
           <span>MongoDB Chat</span>
+          {mongoUri && (
+            <span style={{ display:'flex', alignItems:'center', gap:5, fontSize:11, color:'#10b981', fontWeight:600 }}>
+              <span style={{ width:7, height:7, borderRadius:'50%', background:'#10b981', display:'inline-block', animation:'cqp-pulse 1.5s infinite' }} />
+              Live
+            </span>
+          )}
+          {selColls.length === 1 && (
+            <span style={{ display:'flex', alignItems:'center', gap:4, fontSize:11, color:'#7c3aed', fontWeight:600, background:'#f5f3ff', padding:'2px 8px', borderRadius:10, border:'1px solid #ddd6fe' }}>
+              <Zap size={11} /> ReAct
+            </span>
+          )}
           {selColls.length > 0 && <Badge color="green" style={{marginLeft:'auto'}}>{selColls.length} collection{selColls.length > 1 ? 's' : ''}</Badge>}
         </div>
 

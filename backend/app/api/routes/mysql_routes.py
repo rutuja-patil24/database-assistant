@@ -37,6 +37,18 @@ class MySQLNLQueryRequest(BaseModel):
     tables: List[str]
 
 
+class MySQLNLQueryAutoRequest(BaseModel):
+    host: str
+    port: int = 3306
+    database: str
+    username: str
+    password: str
+    question: str
+    tables: Optional[List[str]] = None   # None → use all tables
+    limit: int = 50
+    react: bool = True
+
+
 class MySQLTestConnectionRequest(BaseModel):
     host: str
     port: int = 3306
@@ -288,6 +300,109 @@ def mysql_nl_query_join(
     except Exception as e:
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/nl-query-auto")
+def mysql_nl_query_auto(
+    req: MySQLNLQueryAutoRequest,
+    user=Depends(get_current_user)
+):
+    """MySQL NL query with ReAct self-correction — up to 3 attempts."""
+    t0 = time.time()
+
+    # Build schema for selected (or all) tables
+    try:
+        schema_tables = req.tables if req.tables else get_mysql_tables(
+            req.host, req.port, req.database, req.username, req.password
+        )
+        schema_prompt = get_mysql_schema(
+            req.host, req.port, req.database, req.username, req.password, schema_tables
+        )
+    except Exception as e:
+        raise HTTPException(503, detail=f"Cannot connect to MySQL: {e}")
+
+    thoughts: list = []
+    actions:  list = []
+    observations: list = []
+    sql = ""
+    results: list = []
+    columns: list = []
+    last_error: Optional[str] = None
+    max_attempts = 3 if req.react else 1
+
+    for attempt in range(max_attempts):
+        # ── Thought ──────────────────────────────────────────────
+        if attempt == 0:
+            thought = f"Analyzing MySQL schema to answer: {req.question}"
+            extra_ctx = ""
+        else:
+            thought = (
+                f"Attempt {attempt + 1}: previous SQL failed with error: {last_error}. "
+                "I need to rewrite the query."
+            )
+            extra_ctx = (
+                f"\n\nThe following SQL caused an error:\n{sql}\n"
+                f"Error: {last_error}\n"
+                "Generate corrected MySQL SQL that avoids this error."
+            )
+        thoughts.append(thought)
+
+        # ── Action: generate SQL ──────────────────────────────────
+        try:
+            sql = generate_mysql_sql(schema_prompt + extra_ctx, req.question)
+            actions.append(sql)
+        except Exception as e:
+            actions.append("")
+            last_error = str(e)
+            observations.append(f"SQL generation failed: {last_error}")
+            continue
+
+        # ── Observation: execute ──────────────────────────────────
+        try:
+            results = execute_mysql_query(
+                req.host, req.port, req.database,
+                req.username, req.password, sql
+            )
+            if req.limit:
+                results = results[:req.limit]
+            columns = list(results[0].keys()) if results else []
+            observations.append(f"Success — {len(results)} row(s) returned")
+            last_error = None
+            break
+        except Exception as e:
+            last_error = str(e)
+            observations.append(f"Execution error: {last_error}")
+
+    elapsed = int((time.time() - t0) * 1000)
+
+    if last_error and not results:
+        raise HTTPException(500, detail=last_error)
+
+    profile      = _build_eda_profile(results, columns)
+    eda_insights = _build_eda_insights(results, columns, req.question)
+
+    response: dict = {
+        "sql":               sql,
+        "data":              results,
+        "columns":           columns,
+        "count":             len(results),
+        "execution_time_ms": elapsed,
+        "database":          req.database,
+        "tables_used":       schema_tables,
+        "profile":           profile,
+        "eda_insights":      eda_insights,
+    }
+
+    if thoughts:
+        response["react_trace"] = {
+            "attempts":      len(thoughts),
+            "thoughts":      thoughts,
+            "actions":       actions,
+            "observations":  observations,
+            "self_corrected": len(thoughts) > 1 and not last_error,
+        }
+
+    return response
 
 
 @router.post("/show-indexes")

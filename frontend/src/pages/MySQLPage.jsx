@@ -3,7 +3,7 @@ import { authAPI } from '../services/api';
 import { mysqlAPI } from '../services/mysqlApi';
 import { Alert, Badge } from '../components/ui';
 import ResultsPanel from '../components/ui/ResultsPanel';
-import { Database, Send, Sparkles, CheckSquare, Square, ChevronDown, ChevronUp } from 'lucide-react';
+import { Database, Send, Sparkles, CheckSquare, Square, ChevronDown, ChevronUp, Zap } from 'lucide-react';
 import './ChatQueryPage.css';
 
 const SAMPLES = [
@@ -87,6 +87,16 @@ export default function MySQLPage() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [history, loading]);
 
+  // Extract password from the URI the backend returns for MySQL connections
+  const extractPassword = (uri) => {
+    try {
+      const url = new URL(uri.replace(/^[a-z]+:\/\//, 'http://'));
+      return decodeURIComponent(url.password);
+    } catch {
+      return uri;
+    }
+  };
+
   const send = async () => {
     const q = input.trim();
     if (!q || loading) return;
@@ -96,44 +106,36 @@ export default function MySQLPage() {
     setLoading(true);
 
     try {
-      // Get decrypted password
       const uriRes = await authAPI.getUri(conn.id);
-      const uri = uriRes.data?.uri || '';
-      let password = '';
-      try {
-        const url = new URL(uri.replace('postgresql://', 'http://'));
-        password = decodeURIComponent(url.password);
-      } catch {
-        password = uri;
-      }
+      const password = extractPassword(uriRes.data?.uri || '');
 
       const connParams = {
         host:     conn.host,
         port:     conn.port,
         database: conn.dbname,
         username: conn.db_username,
-        password: password,
+        password,
       };
 
-      const endpoint = selTables.length > 1
-        ? mysqlAPI.nlQueryJoin
-        : mysqlAPI.nlQuery;
+      let res;
+      if (selTables.length > 1) {
+        // Multi-table: use join endpoint (schema-aware, no ReAct needed for join)
+        res = await mysqlAPI.nlQueryJoin({ ...connParams, question: q, tables: selTables });
+      } else {
+        // Single table (or all): use nl-query-auto with ReAct loop
+        res = await mysqlAPI.nlQueryAuto({
+          ...connParams,
+          question: q,
+          tables: selTables.length ? selTables : undefined,
+          react: true,
+          limit: 100,
+        });
+      }
 
-      const res = await endpoint({
-        ...connParams,
-        question: q,
-        tables: selTables,
-      });
-
-      setHistory(h => [...h, {
-        type: 'result',
-        question: q,
-        content: res.data,
-      }]);
+      setHistory(h => [...h, { type: 'result', question: q, content: res.data }]);
     } catch (e) {
       setHistory(h => [...h, {
-        type: 'error',
-        question: q,
+        type: 'error', question: q,
         content: e.response?.data?.detail || e.message || 'Query failed.',
       }]);
     } finally {
@@ -238,6 +240,15 @@ export default function MySQLPage() {
         <div className="cqp-chat-header">
           <Database size={15} />
           <span>MySQL Chat</span>
+          {conn && (
+            <span style={{ display:'flex', alignItems:'center', gap:5, fontSize:11, color:'#10b981', fontWeight:600 }}>
+              <span style={{ width:7, height:7, borderRadius:'50%', background:'#10b981', display:'inline-block', animation:'cqp-pulse 1.5s infinite' }} />
+              Live
+            </span>
+          )}
+          <span style={{ display:'flex', alignItems:'center', gap:4, fontSize:11, color:'#7c3aed', fontWeight:600, background:'#f5f3ff', padding:'2px 8px', borderRadius:10, border:'1px solid #ddd6fe' }}>
+            <Zap size={11} /> ReAct
+          </span>
           <Badge color="blue" style={{ marginLeft: 'auto' }}>
             {conn?.name || 'No connection'}
           </Badge>

@@ -430,6 +430,145 @@ def mongo_nl_query(req: MongoNLQRequest):
     }
 
 # ---------------------------------------------------------------------------
+# NL query with ReAct self-correction loop
+# ---------------------------------------------------------------------------
+
+class MongoNLQueryAutoRequest(BaseModel):
+    mongo_uri:  str
+    db_name:    str
+    collection: str
+    question:   str
+    limit:      int  = Field(50, ge=1, le=200)
+    react:      bool = True
+
+    @field_validator("collection")
+    @classmethod
+    def safe_collection(cls, v: str) -> str:
+        if not _SAFE_COLLECTION_RE.match(v):
+            raise ValueError(f"Invalid collection name '{v}'.")
+        return v
+
+
+@router.post("/nl-query-auto", tags=["mongo"])
+def mongo_nl_query_auto(req: MongoNLQueryAutoRequest):
+    """
+    MongoDB NL query with ReAct self-correction loop (up to 3 attempts).
+    Returns react_trace with thoughts / actions / observations.
+    """
+    t0 = time.time()
+
+    # ── Schema inference ──────────────────────────────────────────────────
+    try:
+        schema = infer_schema(req.mongo_uri, req.db_name, req.collection, sample_size=200)
+        schema_prompt = build_mongo_schema_prompt(schema)
+        date_candidates = get_date_candidates(schema)
+        date_field = date_candidates[0] if date_candidates else ""
+    except Exception as e:
+        raise HTTPException(503, detail=f"Schema inference failed: {e}")
+
+    thoughts: list = []
+    actions:  list = []
+    observations: list = []
+    spec: dict = {}
+    data: list = []
+    last_error: Optional[str] = None
+    max_attempts = 3 if req.react else 1
+
+    for attempt in range(max_attempts):
+        # ── Thought ──────────────────────────────────────────────────────
+        if attempt == 0:
+            thought = (
+                f"Analyzing MongoDB collection '{req.collection}' "
+                f"to answer: {req.question}"
+            )
+            question_ctx = req.question
+        else:
+            thought = (
+                f"Attempt {attempt + 1}: previous query failed: {last_error}. "
+                "Rewriting the aggregation pipeline."
+            )
+            question_ctx = (
+                f"{req.question}\n\n"
+                f"Previous query that failed:\n{actions[-1] if actions else ''}\n"
+                f"Error: {last_error}\n"
+                "Please write a corrected aggregation pipeline."
+            )
+        thoughts.append(thought)
+
+        # ── Action: generate pipeline ─────────────────────────────────────
+        try:
+            agent = MongoQueryAgent()
+            spec = agent.run(
+                schema_prompt=schema_prompt,
+                question=question_ctx,
+                date_field=date_field or None,
+                default_days=90,
+                limit=req.limit,
+            )
+            spec = enforce_limit(spec, req.limit)
+            actions.append(str(spec))
+        except Exception as e:
+            actions.append("")
+            last_error = str(e)
+            observations.append(f"Pipeline generation failed: {last_error}")
+            continue
+
+        # ── Observation: execute ──────────────────────────────────────────
+        try:
+            data, _ = run_query(req.mongo_uri, req.db_name, req.collection, spec)
+            observations.append(f"Success — {len(data)} document(s) returned")
+            last_error = None
+            break
+        except Exception as e:
+            last_error = str(e)
+            observations.append(f"Execution error: {last_error}")
+
+    elapsed = int((time.time() - t0) * 1000)
+
+    if last_error and not data:
+        raise HTTPException(500, detail=last_error)
+
+    safe_data = [_json_safe(d) for d in data]
+    cols = list(safe_data[0].keys()) if safe_data else []
+
+    post = AgentState(
+        source="mongodb",
+        user_question=req.question,
+        results=safe_data,
+        columns=cols,
+    )
+    post = _orchestrator.run_post_processing(post)
+
+    response: dict = {
+        "source":            "mongo_auto",
+        "db_name":           req.db_name,
+        "collection":        req.collection,
+        "question":          req.question,
+        "spec":              _json_safe(spec),
+        "sql":               str(spec),        # ResultsPanel reads this field
+        "count":             len(safe_data),
+        "data":              safe_data,
+        "columns":           cols,
+        "execution_time_ms": elapsed,
+        "summary":           post.summary,
+        "viz":               post.viz,
+        "profile":           post.profile,
+        "eda_insights":      post.eda_insights,
+    }
+
+    if thoughts:
+        response["react_trace"] = {
+            "attempts":      len(thoughts),
+            "thoughts":      thoughts,
+            "actions":       actions,
+            "observations":  observations,
+            "self_corrected": len(thoughts) > 1 and not last_error,
+        }
+
+    return response
+
+
+# ---------------------------------------------------------------------------
 # Multi-collection NL JOIN query  ($lookup / pipeline approach)
 # ---------------------------------------------------------------------------
 class MongoJoinNLRequest(BaseModel):

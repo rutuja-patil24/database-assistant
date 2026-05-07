@@ -17,6 +17,9 @@ export const mysqlAPI = {
   nlQuery: (params) =>
     axios.post(`${API_BASE}/mysql/nl-query`, params, { headers: getAuthHeader() }),
 
+  nlQueryAuto: (params) =>
+    axios.post(`${API_BASE}/mysql/nl-query-auto`, params, { headers: getAuthHeader() }),
+
   nlQueryJoin: (params) =>
     axios.post(`${API_BASE}/mysql/nl-query-join`, params, { headers: getAuthHeader() }),
 
