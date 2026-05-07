@@ -87,18 +87,42 @@ async def plugin_connect(request: Request):
     body = await request.json()
     connection_string = body.get("connection_string", "")
     session_id = body.get("session_id", str(uuid.uuid4())[:8])
+    db_type = body.get("db_type", "postgres")
 
     if not connection_string:
         raise HTTPException(400, detail="connection_string is required")
 
-    # Test the connection
+    # Test the connection based on db_type
     try:
-        import psycopg2
-        conn = psycopg2.connect(connection_string)
-        cur = conn.cursor()
-        cur.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' LIMIT 20")
-        tables = [row[0] for row in cur.fetchall()]
-        conn.close()
+        if db_type == "mysql":
+            m = _parse_mysql_uri(connection_string)
+            import mysql.connector
+            conn = mysql.connector.connect(
+                host=m["host"], port=m["port"], database=m["database"],
+                user=m["username"], password=m["password"], connection_timeout=8
+            )
+            cur = conn.cursor()
+            cur.execute("SHOW TABLES")
+            tables = [row[0] for row in cur.fetchall()]
+            conn.close()
+
+        elif db_type == "mongodb":
+            from pymongo import MongoClient
+            from urllib.parse import urlparse
+            p = urlparse(connection_string)
+            db_name = p.path.lstrip("/").split("?")[0] or "test"
+            client = MongoClient(connection_string, serverSelectionTimeoutMS=5000)
+            db = client[db_name]
+            tables = db.list_collection_names()[:20]
+
+        else:
+            # postgres / supabase / default
+            import psycopg2
+            conn = psycopg2.connect(connection_string)
+            cur = conn.cursor()
+            cur.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' LIMIT 20")
+            tables = [row[0] for row in cur.fetchall()]
+            conn.close()
 
         _user_sessions[session_id] = {
             "connection_string": connection_string,
@@ -117,44 +141,104 @@ async def plugin_connect(request: Request):
         raise HTTPException(400, detail=f"Connection failed: {str(e)}")
 
 
+@router.post("/plugin/suggest-questions", tags=["plugin"])
+async def plugin_suggest_questions(request: Request):
+    """Generate 3 relevant questions from table/column names using Gemini."""
+    body = await request.json()
+    tables_schema = body.get("tables_schema", {})  # {table: [col, col, ...]}
+    db_type = body.get("db_type", "demo")
+
+    import os, google.generativeai as genai
+    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+    model = genai.GenerativeModel("gemini-2.5-flash")
+
+    if not tables_schema:
+        return {"questions": [
+            "What is the total revenue per department?",
+            "Which category has the highest average value?",
+            "Show the top 10 records by the most recent date",
+        ]}
+
+    schema_desc = "\n".join(
+        f"Table '{t}': {', '.join(cols[:8])}"
+        for t, cols in list(tables_schema.items())[:5]
+    )
+    prompt = (
+        f"Given this {db_type} database schema:\n{schema_desc}\n\n"
+        "Generate exactly 3 short, specific, interesting natural-language questions "
+        "a business analyst would ask. Return ONLY a JSON array of 3 strings. No explanation."
+    )
+    try:
+        response = model.generate_content(prompt)
+        import json
+        raw = response.text.strip().strip("```json").strip("```").strip()
+        questions = json.loads(raw)
+        if isinstance(questions, list) and len(questions) >= 3:
+            return {"questions": questions[:3]}
+    except Exception:
+        pass
+    return {"questions": [
+        "What is the total count per category?",
+        "Show the top 5 records by value",
+        "What is the average value across all records?",
+    ]}
+
+
 @router.post("/plugin/query", tags=["plugin"])
 async def plugin_query(request: Request):
     """
     Execute a natural language query.
-    Supports: demo DB, custom connection string, or uploaded CSV tables.
+    Supports: demo DB, postgres, supabase, mysql, mongodb, or uploaded CSV tables.
     """
     body = await request.json()
     question          = body.get("question", "")
     connection_string = body.get("connection_string", "")
     session_id        = body.get("session_id", "")
     tables            = body.get("tables", {})  # CSV data as {tablename: [{col: val}]}
+    db_type           = body.get("db_type", "")
 
     if not question:
         raise HTTPException(400, detail="question is required")
 
-    # Determine data source
-    if tables:
-        # Option 3: CSV/JSON tables uploaded directly
-        source = "uploaded_tables"
+    # Determine data source and route accordingly
+    if db_type == "uploaded" or (tables and not db_type):
+        # CSV/JSON tables uploaded directly
+        source = "uploaded"
         from app.api.routes.internal_datasets import benchmark_run, BenchmarkRequest
         req = BenchmarkRequest(tables=tables, question=question, limit=50)
         result = benchmark_run(req)
 
+    elif db_type == "mysql":
+        source = "mysql"
+        if not connection_string:
+            raise HTTPException(400, detail="connection_string is required for MySQL")
+        result = _run_nl_query_mysql_uri(question, connection_string)
+
+    elif db_type == "mongodb":
+        source = "mongodb"
+        if not connection_string:
+            raise HTTPException(400, detail="connection_string is required for MongoDB")
+        result = _run_nl_query_mongo_uri(question, connection_string)
+
+    elif db_type in ("postgres", "supabase"):
+        source = db_type
+        if not connection_string:
+            raise HTTPException(400, detail="connection_string is required")
+        result = _run_nl_query_on_pg(question, connection_string)
+
     elif connection_string or session_id:
-        # Option 2: Custom DB connection
+        # Legacy: custom DB connection without explicit db_type
         conn_str = connection_string
         if not conn_str and session_id and session_id in _user_sessions:
             conn_str = _user_sessions[session_id]["connection_string"]
-
         if not conn_str:
             raise HTTPException(400, detail="No connection found for this session_id")
-
         source = "custom_db"
         result = _run_nl_query_on_pg(question, conn_str)
 
     else:
-        # Option 1: Demo Neon DB (default)
-        source = "demo_db"
+        # Demo Neon DB (default)
+        source = "demo"
         result = _run_nl_query_on_pg(question, DEMO_CONNECTION)
 
     # Store result and generate shareable URL
@@ -184,6 +268,102 @@ async def plugin_query(request: Request):
     if error:
         response_body["error"] = error
     return response_body
+
+
+def _parse_mysql_uri(uri: str) -> dict:
+    """Parse mysql://user:pass@host:port/db into components."""
+    from urllib.parse import urlparse, unquote
+    p = urlparse(uri)
+    return {
+        "host": p.hostname or "localhost",
+        "port": p.port or 3306,
+        "username": unquote(p.username or "root"),
+        "password": unquote(p.password or ""),
+        "database": p.path.lstrip("/") or "",
+    }
+
+
+def _run_nl_query_mysql_uri(question: str, connection_string: str) -> Dict:
+    """Run NL->SQL on MySQL using a connection URI."""
+    import logging
+    logger = logging.getLogger("db_assistant.plugin")
+    try:
+        m = _parse_mysql_uri(connection_string)
+        from app.services.mysql_service import (
+            get_mysql_tables, get_mysql_schema,
+            generate_mysql_sql, execute_mysql_query,
+        )
+        tables = get_mysql_tables(m["host"], m["port"], m["database"], m["username"], m["password"])
+        schema = get_mysql_schema(m["host"], m["port"], m["database"], m["username"], m["password"], tables[:20])
+        sql = generate_mysql_sql(schema, question)
+        rows = execute_mysql_query(m["host"], m["port"], m["database"], m["username"], m["password"], sql)
+        columns = list(rows[0].keys()) if rows else []
+        return {"sql": sql, "data": rows, "columns": columns, "error": ""}
+    except Exception as e:
+        logger.error("_run_nl_query_mysql_uri failed: %s", e, exc_info=True)
+        return {"sql": "", "data": [], "columns": [], "error": str(e)}
+
+
+def _run_nl_query_mongo_uri(question: str, connection_string: str) -> Dict:
+    """Run NL->Mongo query using a connection URI."""
+    import logging, json, os
+    logger = logging.getLogger("db_assistant.plugin")
+    try:
+        from pymongo import MongoClient
+        from urllib.parse import urlparse
+        from bson import ObjectId
+        from datetime import datetime
+
+        p = urlparse(connection_string)
+        db_name = p.path.lstrip("/").split("?")[0] or "test"
+
+        client = MongoClient(connection_string, serverSelectionTimeoutMS=5000)
+        db = client[db_name]
+        collections = db.list_collection_names()[:10]
+        if not collections:
+            return {"sql": "", "data": [], "columns": [], "error": "No collections found"}
+
+        # Build schema from sample docs
+        schema_parts = []
+        for coll in collections[:5]:
+            sample = list(db[coll].find({}, {"_id": 0}).limit(2))
+            if sample:
+                keys = list(sample[0].keys())[:10]
+                schema_parts.append(f"Collection '{coll}': {', '.join(keys)}")
+        schema_str = "\n".join(schema_parts)
+
+        import google.generativeai as genai
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        prompt = (
+            f"You are a MongoDB expert. Given this schema:\n{schema_str}\n\n"
+            f"Question: {question}\n\n"
+            "Return ONLY a JSON object with:\n"
+            '  "collection": "<name>",\n'
+            '  "pipeline": [<MongoDB aggregation pipeline stages>]\n'
+            "No explanation, no markdown."
+        )
+        response = model.generate_content(prompt)
+        raw = response.text.strip().strip("```json").strip("```").strip()
+        query_def = json.loads(raw)
+
+        coll_name = query_def.get("collection", collections[0])
+        pipeline = query_def.get("pipeline", [{"$limit": 20}])
+
+        def jsonify(v):
+            if isinstance(v, ObjectId): return str(v)
+            if isinstance(v, datetime): return v.isoformat()
+            if isinstance(v, dict): return {k: jsonify(x) for k, x in v.items()}
+            if isinstance(v, list): return [jsonify(x) for x in v]
+            return v
+
+        data = [jsonify(doc) for doc in db[coll_name].aggregate(pipeline)]
+        columns = list(data[0].keys()) if data else []
+        sql_display = f"db.{coll_name}.aggregate({json.dumps(pipeline, indent=2)})"
+        return {"sql": sql_display, "data": data, "columns": columns, "error": ""}
+    except Exception as e:
+        logger.error("_run_nl_query_mongo_uri failed: %s", e, exc_info=True)
+        return {"sql": "", "data": [], "columns": [], "error": str(e)}
 
 
 def _strip_sql(text: str) -> str:

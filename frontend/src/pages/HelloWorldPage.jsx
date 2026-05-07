@@ -11,6 +11,27 @@ const L3_COLOR = '#059669';
 
 function tok() { return localStorage.getItem('token') || ''; }
 
+const DATA_SOURCES = [
+  { id: 'demo',     label: 'Demo Database', color: '#6366f1', description: 'Pre-loaded Neon PostgreSQL — no setup needed', needsConn: false },
+  { id: 'postgres', label: 'PostgreSQL',    color: '#336791', description: 'Any PostgreSQL database',                      needsConn: true,  placeholder: 'postgresql://user:password@host:5432/database' },
+  { id: 'supabase', label: 'Supabase',      color: '#3ECF8E', description: 'Supabase project (PostgreSQL)',               needsConn: true,  placeholder: 'postgresql://postgres:password@db.xxx.supabase.co:5432/postgres' },
+  { id: 'mysql',    label: 'MySQL',         color: '#F29111', description: 'MySQL / MariaDB database',                   needsConn: true,  placeholder: 'mysql://user:password@host:3306/database' },
+  { id: 'mongodb',  label: 'MongoDB',       color: '#47A248', description: 'MongoDB Atlas or self-hosted',               needsConn: true,  placeholder: 'mongodb+srv://user:password@cluster.mongodb.net/database' },
+  { id: 'uploaded', label: 'Upload CSV',    color: '#8b5cf6', description: 'Upload a CSV file and query instantly',      needsConn: false },
+];
+
+const DEFAULT_SUGGESTIONS = [
+  'What is the total revenue per employee department?',
+  'Which department has the highest average salary?',
+  'Show top 5 orders by revenue',
+];
+
+function parseMySQLUri(uri) {
+  const m = uri.match(/^mysql:\/\/([^:]+):([^@]+)@([^:/]+):?(\d+)?\/(.+)$/);
+  if (!m) return null;
+  return { username: m[1], password: m[2], host: m[3], port: parseInt(m[4]) || 3306, database: m[5] };
+}
+
 // ── Atoms ─────────────────────────────────────────────────────────────────
 
 function StatusDot({ status }) {
@@ -38,7 +59,7 @@ function CodeBlock({ sql }) {
   return (
     <div className="aw-code-card">
       <div className="aw-code-bar">
-        <span className="aw-code-lang">Generated SQL</span>
+        <span className="aw-code-lang">Generated SQL / Query</span>
         <button className={`aw-copy-btn ${copied ? 'copied' : ''}`} onClick={doCopy}>
           {copied ? 'Copied' : 'Copy'}
         </button>
@@ -145,7 +166,7 @@ function L3Pipeline() {
 
 // ── Level 1 ───────────────────────────────────────────────────────────────
 
-function Level1({ question, trigger, onResult }) {
+function Level1({ question, trigger, onResult, source }) {
   const [status, setS] = useState('idle');
   const [result, setR] = useState(null);
   const [error,  setE] = useState('');
@@ -157,9 +178,13 @@ function Level1({ question, trigger, onResult }) {
     setS('running'); setE(''); setR(null); setMs(null);
     const t0 = Date.now();
     try {
+      const body = { question, db_type: source.id };
+      if (source.id !== 'demo') body.connection_string = source.connectionString;
+      if (source.id === 'uploaded') { body.tables = source.tables; delete body.connection_string; }
+
       const res  = await fetch(`${API}/plugin/query`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, tables: {} }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
@@ -220,7 +245,7 @@ function Level1({ question, trigger, onResult }) {
 
 // ── Level 2 ───────────────────────────────────────────────────────────────
 
-function Level2({ question, trigger, onResult }) {
+function Level2({ question, trigger, onResult, source }) {
   const [status, setS]  = useState('idle');
   const [result, setR]  = useState(null);
   const [error,  setE]  = useState('');
@@ -243,11 +268,37 @@ function Level2({ question, trigger, onResult }) {
     setS('running'); setE(''); setR(null); setMs(null); setV(0);
     const t0 = Date.now();
     try {
-      const res = await fetch(`${API}/pg/nl-query-auto`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pg_uri: NEON, question, react: true, limit: 50 }),
-      });
-      let data; try { data = await res.json(); } catch { throw new Error(`Server error (${res.status})`); }
+      let res, data;
+
+      if (source.id === 'mysql') {
+        const parsed = parseMySQLUri(source.connectionString);
+        if (!parsed) throw new Error('Invalid MySQL URI');
+        res = await fetch(`${API}/mysql/nl-query`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${tok()}` },
+          body: JSON.stringify({ ...parsed, question, tables: [] }),
+        });
+      } else if (source.id === 'mongodb') {
+        const { MongoClient } = {};
+        res = await fetch(`${API}/mongo/nl-query`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${tok()}` },
+          body: JSON.stringify({
+            mongo_uri: source.connectionString,
+            db_name: source.dbName || 'test',
+            collection: source.connectedTables[0] || 'data',
+            question,
+          }),
+        });
+      } else {
+        const pg_uri = source.id === 'demo' ? NEON : source.connectionString;
+        res = await fetch(`${API}/pg/nl-query-auto`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pg_uri, question, react: true, limit: 50 }),
+        });
+      }
+
+      try { data = await res.json(); } catch { throw new Error(`Server error (${res.status})`); }
       if (!res.ok) throw new Error(data?.detail || `Failed (${res.status})`);
       const elapsed = Date.now() - t0;
       setR(data); setMs(elapsed); setS('done');
@@ -362,7 +413,7 @@ const SWARM_AGENTS = [
   { id: 'insight', label: 'Insight Synthesiser',  desc: 'Interprets the results and writes a plain-English summary' },
 ];
 
-function Level3({ question, trigger, onResult }) {
+function Level3({ question, trigger, onResult, source }) {
   const [status, setS]  = useState('idle');
   const [result, setR]  = useState(null);
   const [error,  setE]  = useState('');
@@ -383,12 +434,38 @@ function Level3({ question, trigger, onResult }) {
     });
     const t0 = Date.now();
     try {
-      const res = await fetch(`${API}/swarm/pg-query`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${tok()}` },
-        body: JSON.stringify({ pg_uri: NEON, question, limit: 50 }),
-      });
-      let data; try { data = await res.json(); } catch { throw new Error(`Server error (${res.status})`); }
+      let res, data;
+
+      if (source.id === 'mysql') {
+        const parsed = parseMySQLUri(source.connectionString);
+        if (!parsed) throw new Error('Invalid MySQL URI');
+        res = await fetch(`${API}/swarm/mysql-query`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${tok()}` },
+          body: JSON.stringify({ ...parsed, question, limit: 50 }),
+        });
+      } else if (source.id === 'mongodb') {
+        res = await fetch(`${API}/swarm/mongo-query`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${tok()}` },
+          body: JSON.stringify({
+            mongo_uri: source.connectionString,
+            db_name: source.dbName || 'test',
+            collections: source.connectedTables,
+            question,
+            limit: 50,
+          }),
+        });
+      } else {
+        const pg_uri = source.id === 'demo' ? NEON : source.connectionString;
+        res = await fetch(`${API}/swarm/pg-query`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${tok()}` },
+          body: JSON.stringify({ pg_uri, question, limit: 50 }),
+        });
+      }
+
+      try { data = await res.json(); } catch { throw new Error(`Server error (${res.status})`); }
       if (!res.ok) throw new Error(data?.detail || `Failed (${res.status})`);
       const elapsed = Date.now() - t0;
       SWARM_AGENTS.forEach((a, i) => {
@@ -492,7 +569,6 @@ function Level3({ question, trigger, onResult }) {
 function ComparisonTable({ l1, l2, l3 }) {
   if (!l1 && !l2 && !l3) return null;
   const fmt = v => v?.timing ? (v.timing < 1000 ? `${v.timing} ms` : `${(v.timing / 1000).toFixed(1)} s`) : '—';
-  const check  = v => v ? 'Yes' : 'No';
   const rows = [
     { label: 'Agents used',               l1: '1',            l2: '1',         l3: '4' },
     { label: 'Reads its own errors',      l1: 'No',           l2: 'Yes',       l3: 'Yes' },
@@ -543,6 +619,41 @@ function ComparisonTable({ l1, l2, l3 }) {
   );
 }
 
+// ── DataSourceSelector ────────────────────────────────────────────────────
+
+function DataSourceSelector({ selected, onSelect }) {
+  return (
+    <div className="aw-source-grid">
+      {DATA_SOURCES.map(ds => (
+        <div
+          key={ds.id}
+          className={`aw-source-tile${selected.id === ds.id ? ' active' : ''}`}
+          style={selected.id === ds.id ? { borderColor: ds.color, boxShadow: `0 0 0 3px ${ds.color}22` } : {}}
+          onClick={() => onSelect(ds)}
+        >
+          <div className="aw-source-tile-label" style={{ color: ds.color }}>{ds.label}</div>
+          <div className="aw-source-tile-desc">{ds.description}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── CSV Parser ────────────────────────────────────────────────────────────
+
+function parseCSV(text) {
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  if (!lines.length) return { columns: [], rows: [] };
+  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+  const rows = lines.slice(1).map(line => {
+    const vals = line.split(',').map(v => v.trim().replace(/^"|"$/g, ''));
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = vals[i] ?? ''; });
+    return obj;
+  });
+  return { columns: headers, rows };
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────
 
 export default function HelloWorldPage() {
@@ -551,8 +662,89 @@ export default function HelloWorldPage() {
   const [l1, setL1] = useState(null);
   const [l2, setL2] = useState(null);
   const [l3, setL3] = useState(null);
+  const [tab, setTab]   = useState('l1');
+  const [suggestions, setSuggestions] = useState(DEFAULT_SUGGESTIONS);
+
+  const [source, setSource] = useState({
+    id: 'demo',
+    connectionString: '',
+    tables: {},
+    connectedTables: [],
+    dbName: '',
+    collection: '',
+    connectedSchema: {},
+  });
+  const [connStatus, setConnStatus] = useState('idle'); // idle|connecting|connected|error
+  const [connMsg,    setConnMsg]    = useState('');
+  const [csvInfo,    setCsvInfo]    = useState(null);   // {columns, rowCount}
+
+  const sourceInfo = DATA_SOURCES.find(d => d.id === source.id) || DATA_SOURCES[0];
+
+  function selectSource(ds) {
+    setSource(s => ({ ...s, id: ds.id, connectionString: '', connectedTables: [], tables: {} }));
+    setConnStatus('idle');
+    setConnMsg('');
+    setCsvInfo(null);
+    if (ds.id === 'demo') {
+      setSuggestions(DEFAULT_SUGGESTIONS);
+    }
+  }
+
+  async function handleConnect() {
+    if (!source.connectionString.trim()) return;
+    setConnStatus('connecting');
+    setConnMsg('');
+    try {
+      const res = await fetch(`${API}/plugin/connect`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connection_string: source.connectionString, db_type: source.id }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.detail || 'Connection failed');
+      const tables = data.tables_found || [];
+      setSource(s => ({ ...s, connectedTables: tables }));
+      setConnStatus('connected');
+      setConnMsg(`Connected - ${tables.length} tables found`);
+      // Fetch suggestions based on schema
+      fetchSuggestions(tables, source.id);
+    } catch (e) {
+      setConnStatus('error');
+      setConnMsg(e.message);
+    }
+  }
+
+  async function fetchSuggestions(tables, dbType) {
+    try {
+      const tablesSchema = {};
+      tables.forEach(t => { tablesSchema[t] = []; });
+      const res = await fetch(`${API}/plugin/suggest-questions`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tables_schema: tablesSchema, db_type: dbType }),
+      });
+      const data = await res.json();
+      if (data.questions?.length) setSuggestions(data.questions);
+    } catch (_) {}
+  }
+
+  function handleFileChange(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const { columns, rows } = parseCSV(ev.target.result || '');
+      const tableName = file.name.replace(/\.csv$/i, '').replace(/[^a-z0-9]/gi, '_').toLowerCase() || 'uploaded';
+      setSource(s => ({ ...s, tables: { [tableName]: rows }, connectedTables: [tableName] }));
+      setCsvInfo({ columns, rowCount: rows.length, tableName });
+      setSuggestions(DEFAULT_SUGGESTIONS);
+    };
+    reader.readAsText(file);
+  }
 
   function runAll() { setL1(null); setL2(null); setL3(null); setT(t => t + 1); }
+
+  const l1Status = l1 ? (l1.error ? 'error' : 'done') : (trigger > 0 ? 'running' : 'idle');
+  const l2Status = l2 ? (l2.error ? 'error' : 'done') : (trigger > 0 ? 'running' : 'idle');
+  const l3Status = l3 ? (l3.error ? 'error' : 'done') : (trigger > 0 ? 'running' : 'idle');
 
   return (
     <div className="aw-page">
@@ -584,6 +776,77 @@ export default function HelloWorldPage() {
         </div>
       </div>
 
+      {/* Data source selector */}
+      <DataSourceSelector selected={sourceInfo} onSelect={selectSource} />
+
+      {/* Connection panel */}
+      {sourceInfo.needsConn && (
+        <div className="aw-conn-panel">
+          <div className="aw-question-label">
+            {sourceInfo.label} Connection String
+          </div>
+          <div className="aw-conn-row">
+            <input
+              className="aw-conn-input"
+              type="text"
+              value={source.connectionString}
+              onChange={e => setSource(s => ({ ...s, connectionString: e.target.value }))}
+              placeholder={sourceInfo.placeholder || 'Connection string…'}
+              onKeyDown={e => e.key === 'Enter' && handleConnect()}
+            />
+            <button
+              className="aw-conn-btn"
+              style={{ background: sourceInfo.color }}
+              onClick={handleConnect}
+              disabled={connStatus === 'connecting'}
+            >
+              {connStatus === 'connecting' ? 'Connecting…' : 'Connect'}
+            </button>
+          </div>
+          {connStatus === 'connected' && (
+            <div className="aw-conn-success">
+              Connected — {source.connectedTables.length} tables found
+              <div className="aw-conn-chips">
+                {source.connectedTables.map(t => (
+                  <span key={t} className="aw-conn-chip">{t}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          {connStatus === 'error' && (
+            <div className="aw-error" style={{ marginTop: 8 }}>
+              <div className="aw-error-body">{connMsg}</div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* CSV upload panel */}
+      {source.id === 'uploaded' && (
+        <div className="aw-conn-panel">
+          <div className="aw-question-label">Upload CSV File</div>
+          <label className="aw-upload-zone">
+            <input type="file" accept=".csv" style={{ display: 'none' }} onChange={handleFileChange} />
+            {csvInfo ? (
+              <div>
+                <div style={{ fontWeight: 700, color: '#6366f1', marginBottom: 4 }}>{csvInfo.tableName}</div>
+                <div style={{ fontSize: '0.82rem', color: '#64748b' }}>
+                  {csvInfo.columns.length} columns, {csvInfo.rowCount} rows
+                </div>
+                <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: 4 }}>
+                  {csvInfo.columns.slice(0, 5).join(', ')}{csvInfo.columns.length > 5 ? '…' : ''}
+                </div>
+              </div>
+            ) : (
+              <div>
+                <div style={{ fontSize: '0.9rem', color: '#94a3b8' }}>Click to upload a CSV file</div>
+                <div style={{ fontSize: '0.75rem', color: '#cbd5e1', marginTop: 4 }}>or drag and drop</div>
+              </div>
+            )}
+          </label>
+        </div>
+      )}
+
       {/* Question input */}
       <div className="aw-question-bar">
         <div className="aw-question-label">Question sent to all three agents</div>
@@ -597,16 +860,50 @@ export default function HelloWorldPage() {
           />
           <button className="aw-run-btn" onClick={runAll}>Run All</button>
         </div>
+        {/* Suggestion chips */}
+        <div className="aw-suggestion-chips">
+          {suggestions.map((s, i) => (
+            <button key={i} className="aw-suggestion-chip" onClick={() => setQ(s)}>{s}</button>
+          ))}
+        </div>
         <div className="aw-question-hint">
-          Demo database · Tables: employees, departments, orders, sales_performance
+          {source.id === 'demo'
+            ? 'Demo database · Tables: employees, departments, orders, sales_performance'
+            : source.id === 'uploaded' && csvInfo
+            ? `Uploaded: ${csvInfo.tableName} · ${csvInfo.rowCount} rows`
+            : source.connectedTables.length
+            ? `Connected to ${sourceInfo.label} · ${source.connectedTables.length} tables`
+            : `Select and connect a ${sourceInfo.label} database to run queries`
+          }
         </div>
       </div>
 
-      {/* Level cards */}
-      <div className="aw-grid">
-        <Level1 question={question} trigger={trigger} onResult={setL1} />
-        <Level2 question={question} trigger={trigger} onResult={setL2} />
-        <Level3 question={question} trigger={trigger} onResult={setL3} />
+      {/* Tab navigation */}
+      <div className="aw-tab-nav">
+        {[
+          { id: 'l1', label: 'L1 · Single Agent',   status: l1Status },
+          { id: 'l2', label: 'L2 · ReAct Loop',      status: l2Status },
+          { id: 'l3', label: 'L3 · Swarm',           status: l3Status },
+        ].map(t => (
+          <button
+            key={t.id}
+            className={`aw-tab-btn${tab === t.id ? ' active' : ''}`}
+            onClick={() => setTab(t.id)}
+          >
+            <StatusDot status={t.status} />
+            {t.label}
+          </button>
+        ))}
+        <button className="aw-run-btn" style={{ marginLeft: 'auto', padding: '7px 18px', fontSize: '0.8rem' }} onClick={runAll}>
+          Run All 3
+        </button>
+      </div>
+
+      {/* Active tab panel — full-width card */}
+      <div style={{ marginBottom: 20 }}>
+        {tab === 'l1' && <Level1 question={question} trigger={trigger} onResult={setL1} source={source} />}
+        {tab === 'l2' && <Level2 question={question} trigger={trigger} onResult={setL2} source={source} />}
+        {tab === 'l3' && <Level3 question={question} trigger={trigger} onResult={setL3} source={source} />}
       </div>
 
       {/* Comparison */}
