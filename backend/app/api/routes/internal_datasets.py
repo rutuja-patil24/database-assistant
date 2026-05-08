@@ -511,7 +511,8 @@ def dataset_nl_query_auto(req: DatasetAutoNLRequest,
     finally:
         conn.close()
 
-    state = AgentState(
+    # ── Step 1: load schema once ─────────────────────────────────────────
+    schema_state = AgentState(
         user_id           = user_id,
         workspace_id      = user_id,
         source            = "postgresql",
@@ -519,36 +520,86 @@ def dataset_nl_query_auto(req: DatasetAutoNLRequest,
         limit             = req.limit,
         selected_datasets = dataset_ids,
     )
-    state = _orchestrator.run_dataset_query(state)
+    schema_state = _orchestrator.schema_agent.run(schema_state)
+    if schema_state.execution_error:
+        raise HTTPException(500, detail=schema_state.execution_error)
 
-    if state.execution_error:
-        raise HTTPException(500, detail=state.execution_error)
+    # ── Step 2: ReAct loop — up to 3 NLToSQL + Execute attempts ──────────
+    thoughts: list = []
+    actions:  list = []
+    observations: list = []
+    last_error: str | None = None
+    final_state = schema_state
 
-    tables_used = [t for t in all_schemas if t.lower() in (state.generated_sql or "").lower()]
+    for attempt in range(3):
+        if attempt == 0:
+            thought = f"Analyzing uploaded dataset schema to answer: {req.question}"
+            question = req.question
+        else:
+            thought = (
+                f"Attempt {attempt + 1}: previous SQL failed with error: {last_error}. "
+                "Rewriting the query to fix the issue."
+            )
+            question = (
+                f"{req.question}\n\n"
+                f"The previous SQL caused an error: {last_error}\n"
+                "Generate corrected SQL that avoids this error."
+            )
+        thoughts.append(thought)
+
+        # Clone schema state and set (possibly modified) question
+        import copy
+        attempt_state = copy.deepcopy(schema_state)
+        attempt_state.user_question      = question
+        attempt_state.execution_error    = None
+        attempt_state.generated_sql      = None
+        attempt_state.results            = []
+        attempt_state.columns            = []
+
+        attempt_state = _orchestrator.run_dataset_query_attempt(attempt_state)
+        actions.append(attempt_state.generated_sql or "")
+
+        if attempt_state.execution_error:
+            last_error = attempt_state.execution_error
+            observations.append(f"Error: {last_error}")
+        else:
+            observations.append(f"Success — {len(attempt_state.results)} row(s) returned")
+            last_error = None
+            final_state = attempt_state
+            break
+
+    if last_error:
+        raise HTTPException(500, detail=last_error)
+
+    # ── Step 3: Post-processing (profile, EDA, insights, viz) ─────────────
+    final_state = _orchestrator.profiling_agent.run(final_state)
+    final_state = _orchestrator.eda_agent.run(final_state)
+    final_state = _orchestrator.insight_agent.run(final_state)
+    final_state = _orchestrator.visualization_agent.run(final_state)
+
+    tables_used = [t for t in all_schemas if t.lower() in (final_state.generated_sql or "").lower()]
 
     response = {
         "source":            "internal_auto",
         "tables_used":       tables_used,
         "question":          req.question,
-        "sql":               state.generated_sql,
-        "count":             len(state.results),
-        "columns":           state.columns,
-        "data":              state.results,
-        "execution_time_ms": state.execution_time_ms,
-        "summary":           state.summary,
-        "viz":               state.viz,
-        "profile":           state.profile,
-        "eda_insights":      state.eda_insights,
+        "sql":               final_state.generated_sql,
+        "count":             len(final_state.results),
+        "columns":           final_state.columns,
+        "data":              final_state.results,
+        "execution_time_ms": final_state.execution_time_ms,
+        "summary":           final_state.summary,
+        "viz":               final_state.viz,
+        "profile":           final_state.profile,
+        "eda_insights":      final_state.eda_insights,
+        "react_trace": {
+            "attempts":      len(thoughts),
+            "thoughts":      thoughts,
+            "actions":       actions,
+            "observations":  observations,
+            "self_corrected": len(thoughts) > 1 and not last_error,
+        },
     }
-
-    if state.react_attempts and state.react_attempts > 0:
-        response["react_trace"] = {
-            "attempts":      state.react_attempts,
-            "thoughts":      state.react_thoughts,
-            "actions":       state.react_actions,
-            "observations":  state.react_observations,
-            "self_corrected": state.react_attempts > 1,
-        }
 
     return response
 

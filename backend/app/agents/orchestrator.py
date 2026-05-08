@@ -143,27 +143,29 @@ class Orchestrator:
     # ──────────────────────────────────────────────────────────
     def run_dataset_query(self, state: AgentState) -> AgentState:
         """
-        Uploaded dataset query pipeline with ReAct self-correction:
-        SchemaAgent → ReActAgent (NLToSQL + Safety + Execution, up to 3 retries)
+        Uploaded dataset query pipeline (linear, no ReAct):
+        SchemaAgent → NLToSQLAgent → SafetyAgent → ExecutionAgent
         → ProfilingAgent → EDAAgent → InsightAgent → VisualizationAgent
         """
         logger.info("Orchestrator: starting dataset pipeline for: %s", state.user_question)
-
-        # Ensure pg_uri is set so PgExecutionAgent inside react_agent can connect
-        # to the internal system database where dataset tables live.
-        if not state.pg_uri:
-            from app.api.routes.internal_datasets import _sys_uri
-            state.pg_uri = _sys_uri()
 
         # Step 1: Load schema from dataset_registry
         state = self.schema_agent.run(state)
         if state.execution_error:
             return state
 
-        # Steps 2-4: ReAct loop (NLToSQL + Safety + Execution with retry)
-        state.react_enabled      = True
-        state.react_max_attempts = 3
-        state = self.react_agent.run(state)
+        # Step 2: Generate SQL
+        state = self.nl_to_sql_agent.run(state)
+        if state.execution_error:
+            return state
+
+        # Step 3: Safety check
+        state = self.safety_agent.run(state)
+        if state.execution_error:
+            return state
+
+        # Step 4: Execute
+        state = self.execution_agent.run(state)
         if state.execution_error:
             return state
 
@@ -179,6 +181,18 @@ class Orchestrator:
         # Step 8: Visualization spec
         state = self.visualization_agent.run(state)
 
+        return state
+
+    def run_dataset_query_attempt(self, state: AgentState) -> AgentState:
+        """Single NLToSQL + Safety + Execution attempt — used by the ReAct loop
+        in the dataset endpoint. Schema must already be loaded in state."""
+        state = self.nl_to_sql_agent.run(state)
+        if state.execution_error:
+            return state
+        state = self.safety_agent.run(state)
+        if state.execution_error:
+            return state
+        state = self.execution_agent.run(state)
         return state
 
     # ──────────────────────────────────────────────────────────
