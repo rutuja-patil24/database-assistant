@@ -413,6 +413,9 @@ def mongo_nl_query(req: MongoNLQRequest):
     )
     post_state = _orchestrator.run_post_processing(post_state)
 
+    import json as _json2
+    spec_str = _json2.dumps(safe_spec, indent=2)
+
     return {
         "source": "mongo",
         "db_name": req.db_name,
@@ -420,13 +423,22 @@ def mongo_nl_query(req: MongoNLQRequest):
         "date_field_used": date_field or None,
         "question": req.question,
         "spec": safe_spec,
+        "sql": spec_str,
         "count": len(safe_data),
         "data": safe_data,
+        "columns": list(safe_data[0].keys()) if safe_data else [],
         "execution_time_ms": execution_time_ms,
         "summary": post_state.summary or f"Returned {len(safe_data)} rows.",
         "viz": post_state.viz,
         "profile": post_state.profile,
         "eda_insights": post_state.eda_insights,
+        "react_trace": {
+            "attempts":      1,
+            "self_corrected": False,
+            "thoughts":  [f"Analyzing MongoDB collection '{req.collection}' to answer: {req.question}"],
+            "actions":   [spec_str],
+            "observations": [f"Success — {len(safe_data)} document(s) returned"],
+        },
     }
 
 # ---------------------------------------------------------------------------
@@ -888,6 +900,9 @@ Rules:
     )
     join_post = _orchestrator.run_post_processing(join_post)
 
+    import json as _json
+    pipeline_str = _json.dumps(_json_safe(pipeline), indent=2)
+
     return {
         "source":             "mongo_join",
         "db_name":            req.db_name,
@@ -895,12 +910,28 @@ Rules:
         "collections":        req.collections,
         "question":           req.question,
         "pipeline":           _json_safe(pipeline),
+        "sql":                pipeline_str,          # shown in SQL drawer
         "debug_sample":       _json_safe(debug_info),
         "count":              len(safe_data),
         "data":               safe_data,
+        "columns":            list(safe_data[0].keys()) if safe_data else [],
         "execution_time_ms":  elapsed_ms,
         "summary":            join_post.summary,
         "viz":                join_post.viz,
         "profile":            join_post.profile,
         "eda_insights":       join_post.eda_insights,
+        "react_trace": {
+            "attempts":      1,
+            "self_corrected": False,
+            "thoughts":  [
+                f"Analyzing {len(req.collections)} MongoDB collections "
+                f"({', '.join(req.collections)}) using $lookup aggregation "
+                f"to answer: {req.question}"
+            ],
+            "actions":       [pipeline_str],
+            "observations":  [
+                f"Success — {len(safe_data)} document(s) returned "
+                f"from primary collection '{winning_coll}'"
+            ],
+        },
     }

@@ -117,20 +117,15 @@ export default function MySQLPage() {
         password,
       };
 
-      let res;
-      if (selTables.length > 1) {
-        // Multi-table: use join endpoint (schema-aware, no ReAct needed for join)
-        res = await mysqlAPI.nlQueryJoin({ ...connParams, question: q, tables: selTables });
-      } else {
-        // Single table (or all): use nl-query-auto with ReAct loop
-        res = await mysqlAPI.nlQueryAuto({
-          ...connParams,
-          question: q,
-          tables: selTables.length ? selTables : undefined,
-          react: true,
-          limit: 100,
-        });
-      }
+      // Always use nl-query-auto — it fetches full schema and handles joins via AI.
+      // This ensures react_trace is always present in the response.
+      const res = await mysqlAPI.nlQueryAuto({
+        ...connParams,
+        question: q,
+        tables: selTables.length ? selTables : undefined,
+        react: true,
+        limit: 100,
+      });
 
       setHistory(h => [...h, { type: 'result', question: q, content: res.data }]);
     } catch (e) {
